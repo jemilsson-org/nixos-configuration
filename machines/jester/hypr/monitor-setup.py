@@ -187,23 +187,15 @@ class HyprlandMonitorSetup:
         # bottom), laptop to their left at 0,0 (Hyprland anchors eDP-1 there),
         # top-aligned with the top panel.
         self.apply_config(f"{self.LAPTOP_MONITOR},{self.LAPTOP_RESOLUTION},0x0,1")
-        # Native @60 only: the panels' scalers reject every non-EDID mode
-        # (custom CVT-RB 50 Hz modelines sync as garbage), and the EDID has
-        # no 2560x1600 mode below 60 Hz. When the worn USB-C port trains at
-        # 2 lanes (1260 PBN), two native streams (2x760 PBN at 6bpc) do not
-        # fit and Hyprland's ladder drops one panel to 1080p; a clean 4-lane
-        # train fits both. Software cannot do better; reseat the cable or
-        # use the other USB-C port for full resolution on both.
-        # Mixed rates sized to the worn port's 2-lane HBR2 budget
-        # (1260 PBN): top panel native 60 Hz (760 PBN), bottom panel
-        # 30 Hz CVT-RB (~360 PBN) — 30 divides the scaler's fixed 60 Hz
-        # TCON, so frame doubling stays in sync where 50 Hz drifted.
-        # Both fit a 4-lane train at 60 Hz, but rules are static; this
-        # split works on any train the port produces.
-        rb30 = ("modeline 134.32 2560 2608 2640 2720 "
-                "1600 1603 1609 1646 +hsync -vsync")
+        # Native @60 on both panels: the panels' scalers reject every
+        # non-EDID mode (custom CVT-RB modelines sync as garbage), and the
+        # EDID has no 2560x1600 mode below 60 Hz. Two native streams
+        # (2x760 PBN at 6bpc) fit a clean 4-lane train; they only overflow
+        # if the worn USB-C port trains at 2 lanes (1260 PBN), where
+        # Hyprland's ladder drops one panel to 1080p. If that happens,
+        # reseat the cable or use the other USB-C port.
         self.apply_config(f"{rtk_orig},2560x1600@60,{laptop_width}x0,1")
-        self.apply_config(f"{rtk_mod},{rb30},{laptop_width}x{external_height},1")
+        self.apply_config(f"{rtk_mod},2560x1600@60,{laptop_width}x{external_height},1")
 
     def setup_triple_monitor_office(self, mon1: Monitor, mon2: Monitor) -> None:
         """Configure office setup with two 4K monitors in horizontal layout."""
