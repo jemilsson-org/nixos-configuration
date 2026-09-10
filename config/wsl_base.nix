@@ -32,7 +32,11 @@
 
   programs.git.enable = true;
 
-  environment.systemPackages = [ pkgs.unstable.opencode ];
+  environment.systemPackages = with pkgs; [
+    jq
+    nodejs
+    unstable.opencode
+  ];
 
   time.timeZone = "Europe/Stockholm";
   i18n.defaultLocale = "en_US.UTF-8";
