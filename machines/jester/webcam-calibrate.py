@@ -9,11 +9,33 @@ from a photographed 24-patch ColorChecker Classic. Two subcommands:
       the last one (so auto-gain has settled) as DIR/raw.bin, and writes
       a quick-look DIR/preview.png so you can check framing before fitting.
 
-  webcam-calibrate fit RAW.bin [--corners ...] [--write]
+  webcam-calibrate fit RAW.bin [--corners ...] [--dark DARK.bin --flat FLAT.bin] [--write]
       Decodes the raw frame, locates the 24 patches (cv2.mcc auto-detect,
       or a manual --corners homography), fits the CCM, and prints it. With
       --write, replaces the matrix (and header comment) in ov2740-tuning.yaml
       in place, refusing to do so if the fit looks bad.
+
+  webcam-calibrate render --out DIR [--scale 0.35]
+      Renders chart.png/flat.png/dark.png (see cmd_render's docstring) to
+      show fullscreen on the monitor facing the camera, for capture+fit.
+
+Why fit needs --dark/--flat (2026-09-10 finding): the OV2740's auto-gain
+sits at its minimum exposure whenever a screen fills the frame, so a chart
+much brighter than ~35% linear clips; and the monitor panel has a strong
+angular brightness falloff across the frame plus an additive floor (panel
+black level and room glare reflected off the glossy surface), so raw
+patch samples read nowhere near the true patch ratios (an early attempt
+without correction had ~100% mean residual). The fix: photograph the
+panel fully black (DARK) and at a uniform mid-grey rgb(100,100,100)
+(FLAT) in the same session as the chart, blur both with a wide Gaussian
+(sigma 6, matching the falloff's spatial scale) to suppress their own
+photon noise, and correct the chart as
+`(chart - blur(dark)) / (blur(flat) - blur(dark))` before sampling
+patches -- this divides out the panel's per-pixel gain and subtracts its
+floor, leaving a ratio image where a uniformly-lit patch reads uniformly
+regardless of where it sits in the frame. Verified: mean residual dropped
+from ~100% to 5.9% on real captures, with the neutral ramp landing within
+1% of its reference.
 
 Runtime pipeline this targets (src/ipa/simple, src/libcamera/
 software_isp/debayer_cpu.cpp in libcamera 0.7.0's soft ISP): black level
@@ -128,6 +150,26 @@ def debayer_bin(raw, black_level):
     return np.clip(rgb, 0.0, 1.0)
 
 
+def dark_flat_correct(chart_linear, dark_linear, flat_linear, sigma=6.0):
+    """Divide out the monitor's angular brightness falloff and additive
+    floor (panel black level + room glare) using a DARK (screen off) and
+    FLAT (uniform grey) capture of the same panel -- see the module
+    docstring for why this is necessary. Both references are blurred with
+    a wide Gaussian first, to average away their own shot noise without
+    smearing across the chart's much smaller patch features; the result
+    is a ratio image (0 = dark floor, 1 = the flat field), not linear RGB,
+    so it is only ever used for sampling patches, never written out as an
+    image."""
+    def blur(im):
+        return cv2.GaussianBlur(im.astype(np.float32), (0, 0), sigma).astype(np.float64)
+
+    dark_b = blur(dark_linear)
+    flat_b = blur(flat_linear)
+    denom = flat_b - dark_b
+    denom = np.where(np.abs(denom) < 1e-6, 1e-6, denom)
+    return (chart_linear - dark_b) / denom
+
+
 def crude_wb_srgb_preview(rgb_linear):
     """Grey-world WB + sRGB gamma, just so a human can check framing /
     feed the chart detector -- not colour-accurate, unlike fit()'s WB."""
@@ -201,15 +243,22 @@ def detect_checker_auto(preview_bgr_u8):
     return list(pts)
 
 
-def fit_ccm(samples):
+def fit_ccm(samples, saturated=None):
     """Core CCM fit from 24 raw (pre-WB) linear patch mean samples (patch
     order matching REFERENCE_LINEAR). Returns a dict: gains (R,G,B WB
     gains, G=1), k (fitted exposure scalar), M (3x3, rows sum to 1),
     usable/rejected (patch indices), resid (per-patch relative residual,
     meaningful only for usable patches). Raises ValueError if every
     neutral patch is unusable (can't establish white balance at all).
+
+    `saturated`, if given, is a length-24 bool array overriding the
+    default any(samples > 0.95) test -- needed by dark+flat mode, whose
+    `samples` are (chart - dark) / (flat - dark) ratios rather than
+    linear RGB, so the 0.95 test must instead run against the
+    uncorrected chart samples.
     """
-    saturated = np.any(samples > 0.95, axis=1)
+    if saturated is None:
+        saturated = np.any(samples > 0.95, axis=1)
     rejected = [i for i in range(24) if saturated[i]]
     usable = [i for i in range(24) if not saturated[i]]
 
@@ -276,12 +325,14 @@ def write_yaml(yaml_path, matrix, mean_resid, n_usable):
     paragraph = (
         f"OV2740 soft-ISP tuning for jester. Same algorithm chain as "
         f"uncalibrated.yaml plus a Ccm block. Matrix fitted {date} by "
-        f"webcam-calibrate.py fit from a physical ColorChecker Classic "
-        f"({n_usable} usable patches, {mean_resid * 100:.1f}% mean "
-        f"residual), constrained least squares with each row summing to "
-        f"1 -- AWB upstream already supplies the white point, so the CCM "
-        f"only rotates hue/saturation. See webcam-calibrate.py's module "
-        f"docstring for the method and rationale."
+        f"webcam-calibrate.py fit from a ColorChecker chart shown on the "
+        f"EHOMEWEI panel at 35% linear brightness, with dark+flat "
+        f"panel-falloff correction ({n_usable} usable patches, "
+        f"{mean_resid * 100:.1f}% mean residual), constrained least "
+        f"squares with each row summing to 1 -- AWB upstream already "
+        f"supplies the white point, so the CCM only rotates "
+        f"hue/saturation. See webcam-calibrate.py's module docstring for "
+        f"the method and rationale."
     )
     header = "".join(f"# {line}\n" for line in textwrap.wrap(paragraph, width=75))
     lines[start:end] = [header]
@@ -313,8 +364,17 @@ def cmd_capture(args):
             ["cam", "-c1", "--stream", "role=raw", "--capture=30", f"--file={pattern}"],
             check=False,
         )
-        frames = glob.glob(os.path.join(args.out, "raw*.bin"))
-        frames.sort(key=lambda p: int(re.search(r"(\d+)", os.path.basename(p)).group(1)))
+        # cam expands "#" to "<camera>-<stream>-<seq>"; exclude a previous
+        # run's raw.bin, whose name carries no sequence number.
+        frames = sorted(
+            (m.group(0), int(m.group(1)))
+            for m in map(
+                lambda p: re.search(r".*-(\d+)\.bin$", p),
+                glob.glob(os.path.join(args.out, "raw*-*.bin")),
+            )
+            if m
+        )
+        frames = [f for f, _ in sorted(frames, key=lambda t: t[1])]
         if not frames:
             sys.exit("capture: no raw frames were written; see the `cam` output above")
         raw_path = os.path.join(args.out, "raw.bin")
@@ -333,6 +393,9 @@ def cmd_capture(args):
 
 
 def cmd_fit(args):
+    if bool(args.dark) != bool(args.flat):
+        sys.exit("fit: --dark and --flat must be given together")
+
     raw = read_raw(args.raw)
     p05 = float(np.percentile(raw.astype(np.float64), 0.5))
     print(f"observed 0.5th percentile of raw code values: {p05:.1f} (using --black-level {args.black_level})")
@@ -355,9 +418,29 @@ def cmd_fit(args):
             )
         print("patch grid source: cv2.mcc auto-detect")
 
-    samples = np.array([sample_quad_mean(linear, q) for q in quads])
+    uncorrected_samples = np.array([sample_quad_mean(linear, q) for q in quads])
+    saturated = None  # let fit_ccm derive it from `samples` itself, default mode
+
+    if args.dark:
+        print("correction mode: dark+flat (monitor falloff/floor correction)")
+        dark_linear = debayer_bin(read_raw(args.dark), args.black_level)
+        flat_linear = debayer_bin(read_raw(args.flat), args.black_level)
+        corrected = dark_flat_correct(linear, dark_linear, flat_linear)
+        samples = np.array([sample_quad_mean(corrected, q) for q in quads])
+        # `samples` are (chart - dark) / (flat - dark) ratios, not linear
+        # RGB, so they can legitimately exceed fit_ccm()'s 0.95 saturation
+        # threshold even for an unsaturated patch; rescale to the same
+        # [0, 0.9] headroom a real unsaturated linear capture would
+        # occupy, and judge saturation from the uncorrected chart samples
+        # instead (passed as `saturated` below).
+        samples = samples * (0.9 / samples.max())
+        saturated = np.any(uncorrected_samples > 0.95, axis=1)
+    else:
+        print("correction mode: none (raw patch samples)")
+        samples = uncorrected_samples
+
     try:
-        result = fit_ccm(samples)
+        result = fit_ccm(samples, saturated=saturated)
     except ValueError as e:
         sys.exit(f"fit: {e}")
 
@@ -401,6 +484,62 @@ def cmd_fit(args):
         print(f"wrote {args.yaml_path}")
 
 
+RENDER_W, RENDER_H = 2560, 1600
+PATCH_PX, GAP_PX = 300, 80
+FLAT_SRGB8 = (100, 100, 100)
+
+
+def _srgb_linear_u8(rgb_u8, scale=1.0):
+    """(r, g, b) 0-255 sRGB -> 0-255 sRGB u8 after scaling in linear
+    light by `scale` (so `scale` is a true linear-brightness fraction,
+    not a naive multiply on gamma-encoded values)."""
+    linear = srgb_to_linear(np.array(rgb_u8, dtype=np.float64) / 255.0) * scale
+    return tuple(int(round(v)) for v in linear_to_srgb(linear) * 255)
+
+
+def cmd_render(args):
+    """Write chart.png, flat.png and dark.png to --out, for display on the
+    monitor facing the camera:
+
+      1. `feh -F DIR/dark.png` then, once feh has it fullscreen,
+         `hyprctl dispatch 'hl.dsp.window.fullscreen()'` (jester/Hyprland)
+         -- run `webcam-calibrate capture` for the dark frame.
+      2. Repeat with flat.png, then capture, for the flat frame.
+      3. Repeat with chart.png, then capture, for the chart frame.
+      4. `webcam-calibrate fit CHART.bin --dark DARK.bin --flat FLAT.bin --corners TL TR BR BL`
+
+    chart.png draws the 24 ColorChecker patches at `--scale` (default
+    0.35) of full linear brightness -- see the module docstring for why:
+    the OV2740's auto-gain sits at minimum exposure with a screen filling
+    the frame, so a full-brightness chart clips.
+    """
+    os.makedirs(args.out, exist_ok=True)
+
+    grid_w = 6 * PATCH_PX + 5 * GAP_PX
+    grid_h = 4 * PATCH_PX + 3 * GAP_PX
+    x0, y0 = (RENDER_W - grid_w) // 2, (RENDER_H - grid_h) // 2
+    chart = np.zeros((RENDER_H, RENDER_W, 3), dtype=np.uint8)
+    for i in range(4):
+        for j in range(6):
+            r, g, b = _srgb_linear_u8(COLORCHECKER_SRGB8[i * 6 + j], scale=args.scale)
+            px, py = x0 + j * (PATCH_PX + GAP_PX), y0 + i * (PATCH_PX + GAP_PX)
+            chart[py:py + PATCH_PX, px:px + PATCH_PX] = (b, g, r)  # BGR for cv2
+    chart_path = os.path.join(args.out, "chart.png")
+    cv2.imwrite(chart_path, chart)
+
+    flat = np.full((RENDER_H, RENDER_W, 3), FLAT_SRGB8[::-1], dtype=np.uint8)  # BGR
+    flat_path = os.path.join(args.out, "flat.png")
+    cv2.imwrite(flat_path, flat)
+
+    dark = np.zeros((RENDER_H, RENDER_W, 3), dtype=np.uint8)
+    dark_path = os.path.join(args.out, "dark.png")
+    cv2.imwrite(dark_path, dark)
+
+    print(f"chart: {chart_path}")
+    print(f"flat:  {flat_path}")
+    print(f"dark:  {dark_path}")
+
+
 def _parse_corner(s):
     x, y = s.split(",")
     return (float(x), float(y))
@@ -426,6 +565,8 @@ def build_parser():
     )
     pf.add_argument("--black-level", type=int, default=DEFAULT_BLACK_LEVEL, help="10-bit black level (default: %(default)s)")
     pf.add_argument("--write", action="store_true", help="replace the CCM in --yaml-path")
+    pf.add_argument("--dark", help="raw capture of the panel fully black; requires --flat (see module docstring)")
+    pf.add_argument("--flat", help="raw capture of the panel at uniform rgb(100,100,100); requires --dark")
     pf.add_argument("--target", choices=["physical", "display"], default="physical")
     pf.add_argument(
         "--yaml-path",
@@ -433,6 +574,11 @@ def build_parser():
         help="tuning yaml to update with --write, relative to cwd (default: %(default)s -- run from the repo root)",
     )
     pf.set_defaults(func=cmd_fit)
+
+    pr = sub.add_parser("render", help="render chart/flat/dark PNGs to show on the monitor facing the camera")
+    pr.add_argument("--out", required=True, help="output directory")
+    pr.add_argument("--scale", type=float, default=0.35, help="chart linear brightness fraction (default: %(default)s)")
+    pr.set_defaults(func=cmd_render)
 
     return p
 

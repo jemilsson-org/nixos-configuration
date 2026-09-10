@@ -100,7 +100,63 @@ def render_raw_bin(path):
     return corners
 
 
+def falloff_gain_offset():
+    """A synthetic angular falloff (centre-bright vignette) plus an
+    additive floor, standing in for the monitor panel's falloff + glare
+    that motivate dark+flat correction (see the module docstring)."""
+    yy, xx = np.mgrid[0:BINNED_H, 0:BINNED_W].astype(np.float64)
+    cy, cx = BINNED_H / 2, BINNED_W / 2
+    r = np.hypot((yy - cy) / cy, (xx - cx) / cx)
+    gain = 1.0 - 0.4 * np.clip(r, 0, 1)  # 1.0 at centre, 0.6 at the edge
+    offset = 0.05 + 0.03 * np.clip(r, 0, 1)  # additive floor, also uneven
+    return gain[..., None], offset[..., None]
+
+
+def test_dark_flat():
+    """Same fit_ccm() round-trip as main(), but with an added per-pixel
+    gain + additive floor on the chart, dark and flat frames -- checks
+    that dark_flat_correct() recovers the same CCM despite it."""
+    gain, offset = falloff_gain_offset()
+    ref = wc.REFERENCE_LINEAR
+    native = np.clip((ref @ np.linalg.inv(KNOWN_M).T) / KNOWN_K / KNOWN_GAINS, 0.0, 1.0)
+    corners = synth_corners()
+    (x0, y0), (x1, _), (_, y1), _ = corners
+    chart = np.zeros((BINNED_H, BINNED_W, 3))
+    for i in range(PATCH_ROWS):
+        for j in range(PATCH_COLS):
+            cx0, cx1 = int(round(x0 + (x1 - x0) * j / PATCH_COLS)), int(round(x0 + (x1 - x0) * (j + 1) / PATCH_COLS))
+            cy0, cy1 = int(round(y0 + (y1 - y0) * i / PATCH_ROWS)), int(round(y0 + (y1 - y0) * (i + 1) / PATCH_ROWS))
+            chart[cy0:cy1, cx0:cx1] = native[i * PATCH_COLS + j]
+    flat_scene = np.full((BINNED_H, BINNED_W, 3), 100 / 255)
+
+    def to_raw(binned_linear):
+        panel = np.clip(binned_linear * gain + offset, 0.0, 1.0)
+        full_scale = wc.FULL_SCALE - KNOWN_BLACK_LEVEL
+        raw = np.zeros((BINNED_H * 2, BINNED_W * 2), dtype=np.float64)
+        r, g, b = panel[..., 0], panel[..., 1], panel[..., 2]
+        raw[0::2, 0::2], raw[0::2, 1::2] = g, r
+        raw[1::2, 0::2], raw[1::2, 1::2] = b, g
+        raw = np.clip(np.round(raw * full_scale + KNOWN_BLACK_LEVEL), 0, wc.FULL_SCALE).astype("<u2")
+        return wc.debayer_bin(raw, KNOWN_BLACK_LEVEL)
+
+    chart_lin = to_raw(chart)
+    dark_lin = to_raw(np.zeros_like(chart))
+    flat_lin = to_raw(flat_scene)
+
+    corrected = wc.dark_flat_correct(chart_lin, dark_lin, flat_lin)
+    quads = wc.grid_quads_from_corners(corners)
+    samples = np.array([wc.sample_quad_mean(corrected, q) for q in quads])
+    samples = samples * (0.9 / samples.max())
+    result = wc.fit_ccm(samples)
+
+    max_err = np.abs(result["M"] - KNOWN_M).max()
+    print(f"[dark+flat] max elementwise absolute error vs. known M: {max_err * 100:.2f}pp")
+    assert max_err < 0.03, f"[dark+flat] recovered CCM differs by {max_err * 100:.2f}pp (> 3)"
+    print("webcam-calibrate-test (dark+flat): PASS")
+
+
 def main():
+    test_dark_flat()
     with tempfile.TemporaryDirectory() as td:
         raw_path = os.path.join(td, "raw.bin")
         corners = render_raw_bin(raw_path)
