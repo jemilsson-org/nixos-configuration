@@ -92,7 +92,10 @@
     {
       overlays.default = overlay-jemilsson;
 
-      packages.${system}.mx-debounce = pkgs.callPackage ./packages/mx-debounce { };
+      packages.${system} = {
+        mx-debounce = pkgs.callPackage ./packages/mx-debounce { };
+        webcam-calibrate = pkgs.callPackage ./machines/jester/webcam-calibrate.nix { };
+      };
 
       nixosModules = {
         serverBase = import ./config/server_base.nix;
@@ -155,6 +158,11 @@
           bash retry-body.test.sh
           touch $out
         '';
+
+      # Hermetic self-test for the webcam CCM fit math (synthetic raw
+      # frame, no camera/network). Run: nix build .#checks.x86_64-linux.webcam-calibrate-test
+      checks.x86_64-linux.webcam-calibrate-test =
+        pkgs.callPackage ./machines/jester/webcam-calibrate-test.nix { };
 
     };
 }

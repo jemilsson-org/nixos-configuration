@@ -32,6 +32,10 @@ let
       cp ${./ov2740-tuning.yaml} $out/share/libcamera/ipa/simple/ov2740.yaml
     '';
   });
+
+  # Refits the Ccm block above from a photographed ColorChecker; see
+  # webcam-calibrate.py for the method.
+  webcamCalibrate = pkgs.callPackage ./webcam-calibrate.nix { };
 in
 {
   # Use latest kernel from unstable for xe driver DP-MST fixes (needs 6.21+)
@@ -66,7 +70,7 @@ in
   boot.kernelModules = [ "spi_ljca" "vsc_spi_bind" "mei_vsc" "ivsc_ace" "ivsc_csi" ];
   hardware.firmware = with pkgs; [ ipu6-camera-bins ivsc-firmware ];
 
-  environment.systemPackages = with pkgs; [ libcamera ];
+  environment.systemPackages = with pkgs; [ libcamera ] ++ [ webcamCalibrate ];
 
   users.users.jonas.extraGroups = [ "video" ];
 
