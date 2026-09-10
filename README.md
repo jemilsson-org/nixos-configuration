@@ -25,3 +25,27 @@ sudo nixos-rebuild switch --upgrade --flake '.#'
 
 nix flake update
 ```
+
+## WSL
+
+The `wsl` host runs NixOS-WSL on a Windows machine.
+
+Install:
+
+1. Download `nixos.wsl` from https://github.com/nix-community/NixOS-WSL/releases/latest and double-click it, or run `wsl --install --from-file nixos.wsl`.
+2. Open the new distro (`wsl -d NixOS`) and run:
+
+```sh
+sudo nixos-rebuild switch --flake github:jemilsson/nixos-configuration#wsl
+```
+
+3. Exit and run `wsl -t NixOS` once so the default user switches to `jonas`.
+
+Other flakes can reuse the base module:
+
+```nix
+modules = [
+  nixos-wsl.nixosModules.default
+  nixos-configuration.nixosModules.wslBase
+];
+```

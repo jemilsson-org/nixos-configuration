@@ -22,6 +22,10 @@
     claude-code = {
       url = "github:sadjow/claude-code-nix";
     };
+    nixos-wsl = {
+      url = "github:nix-community/NixOS-WSL/main";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     # Upstream Hyprland (jester only). Deliberately NOT following nixpkgs so
     # hyprland.cachix.org binaries stay usable; overriding nixpkgs would force
     # a local rebuild of hyprland + aquamarine + hyprutils etc.
@@ -54,7 +58,7 @@
     */
   };
 
-  outputs = { self, nixpkgs, nixpkgs-unstable, nixpkgs-jemilsson, fafnir, syna, claude-code, hyprland, nix-build-router }: # , agenix, agenix-rekey }: # bambu-studio,
+  outputs = { self, nixpkgs, nixpkgs-unstable, nixpkgs-jemilsson, fafnir, syna, claude-code, hyprland, nix-build-router, nixos-wsl }: # , agenix, agenix-rekey }: # bambu-studio,
     let
       system = "x86_64-linux";
       overlay-unstable = final: prev: {
@@ -95,9 +99,18 @@
         desktopBase = import ./config/desktop_base.nix;
         laptopBase = import ./config/laptop_base.nix;
         bareMetal = import ./config/bare_metal.nix;
+        wslBase = import ./config/wsl_base.nix;
         #pkgs = pkgs;
       };
       nixosConfigurations = {
+        wsl = nixpkgs.lib.nixosSystem {
+          modules = [
+            ({ config, pkgs, ... }: { nixpkgs.hostPlatform = system; nixpkgs.overlays = [ overlay-unstable overlay-jemilsson ]; })
+            nixos-wsl.nixosModules.default
+            ./machines/wsl/configuration.nix
+          ];
+        };
+
         jester = nixpkgs.lib.nixosSystem {
           specialArgs = { inherit hyprland nix-build-router; };
           modules = [
