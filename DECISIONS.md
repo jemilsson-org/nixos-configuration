@@ -190,3 +190,15 @@ risk a cold boot may or may not clear. Value 0x02 (USB Bridge) is confirmed
 correct over 0x01 (Native IOs): native SPI1 (00:1e.3) is firmware-disabled, so
 Native IOs routes to a nonexistent controller. SPI_PROGRAMMER.md now states all
 of this.
+
+## jester: webcam CCM recalibrated after motherboard swap (2026-09-10)
+
+The motherboard was replaced, which changed the camera picture (the IPU6
+raw pipeline lives on the SoC; the OV2740 sensor in the lid stayed). The
+2026-08-19 CCM was fitted on the old board. Refit with `webcam-calibrate`
+(machines/jester/webcam-calibrate.py): chart on the EHOMEWEI panel at 35%
+brightness, dark and flat captures to remove panel falloff and glare, rows
+constrained to sum to 1. 23 usable patches, 5.2% mean residual. Redo after
+any further board or camera change; the AGC step-size patch and the 1.3
+contrast default in camera.nix were tuned on the old board and are the next
+knobs if exposure hunts or contrast looks wrong.
