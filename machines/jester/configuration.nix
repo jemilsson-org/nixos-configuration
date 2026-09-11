@@ -313,39 +313,6 @@ in
     serviceConfig.Type = "oneshot";
   };
 
-  # Self-healing watchdog for stale fprintd sensor claims.
-  #
-  # hyprlock claims the fingerprint sensor via pam_fprintd during unlock.
-  # If it freezes or crashes without releasing, fprintd keeps the claim and
-  # every subsequent native fafnir sign fails with
-  # net.reactivated.Fprint.Error.AlreadyInUse, while OpenPGP-through-fafnir
-  # (no fprintd gate) keeps working. restart-fprintd-on-resume only covers
-  # suspend/resume; this catches the freeze-during-normal-operation case by
-  # watching for the "already claimed" denial in fprintd's journal and
-  # restarting fprintd to drop the orphaned claim. The denial only logs when
-  # a claim is genuinely refused, so a restart here is always corrective.
-  systemd.services.fprintd-stale-claim-reaper = {
-    description = "Restart fprintd when a stale sensor claim is detected";
-    serviceConfig.Type = "oneshot";
-    script = ''
-      if ${pkgs.systemd}/bin/journalctl -u fprintd.service --since "-45s" --no-pager \
-           | ${pkgs.gnugrep}/bin/grep -qi "already claimed"; then
-        echo "stale fprintd claim detected; restarting fprintd"
-        ${pkgs.systemd}/bin/systemctl restart fprintd.service
-      fi
-    '';
-  };
-
-  systemd.timers.fprintd-stale-claim-reaper = {
-    description = "Periodically reap stale fprintd sensor claims";
-    wantedBy = [ "timers.target" ];
-    timerConfig = {
-      OnBootSec = "1min";
-      OnUnitActiveSec = "20s";
-      AccuracySec = "5s";
-    };
-  };
-
   systemd.tmpfiles.rules = [
     "L+    /opt/rocm/hip   -    -    -     -    ${pkgs.rocmPackages.clr}"
     # Seed portal-login's SSID -> pass-entry mapping on first boot only ("C"
@@ -959,6 +926,16 @@ in
 
 
 
+
+  # hyprlock's own fingerprint auth (auth:fingerprint in hyprlock.conf) talks
+  # to fprintd directly. pam_fprintd in the same PAM stack claimed the same
+  # sensor at the same time, so fprintd denied one side with "already
+  # claimed"; that denial used to trigger the stale-claim reaper to restart
+  # fprintd mid-verify, and hyprlock then hung after unlock (2026-09-11).
+  # Disabling pam_fprintd here leaves hyprlock's native path as the only
+  # claimant. The hyprlock-wrapper EXIT trap still restarts fprintd after
+  # hyprlock exits.
+  security.pam.services.hyprlock.fprintAuth = false;
 
   # Allow jonas to restart fprintd without a password (needed to clear stale
   # D-Bus claims after hyprlock exits without releasing the sensor).
