@@ -298,6 +298,7 @@ in
     supportedLocales = [
       "en_US.UTF-8/UTF-8"
       "sv_SE.UTF-8/UTF-8"
+      "en_DK.UTF-8/UTF-8" # LC_TIME, ISO 8601 date-time
       "th_TH.UTF-8/UTF-8"
     ];
   };

@@ -40,6 +40,7 @@
 
   time.timeZone = "Europe/Stockholm";
   i18n.defaultLocale = "en_US.UTF-8";
+  i18n.extraLocaleSettings.LC_TIME = "en_DK.UTF-8"; # ISO 8601 date-time
 
   system.stateVersion = "26.05";
 }
