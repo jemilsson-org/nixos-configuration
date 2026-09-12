@@ -583,11 +583,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1789129476,
-        "narHash": "sha256-wrAwHYuAX/HnzNWKgA9xABgv49vdPeIO3nHhXWVHyS8=",
+        "lastModified": 1789221653,
+        "narHash": "sha256-E4R7L7tlhkzcZnYFg5+eLGqQBKm0EXvX9emxR0yHdJ0=",
         "ref": "refs/heads/master",
-        "rev": "25ae8555257711563e20fdc06fadffd24ce5db23",
-        "revCount": 382,
+        "rev": "e7a6a9b7c0f9b63e112f45020a29d1e0e3976606",
+        "revCount": 398,
         "type": "git",
         "url": "ssh://git@github.com/jemilsson-org/closure-build"
       },

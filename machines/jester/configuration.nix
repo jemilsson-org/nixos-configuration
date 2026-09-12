@@ -1205,6 +1205,7 @@ in
         "CLOSURE_BUILD_GATEWAY_HOST=closure-build-gateway.fly.dev"
         "CLOSURE_BUILD_GATEWAY_PORT=443"
         "CLIENT_DAEMON_SIZING=1"
+        "CLIENT_DAEMON_BUILD_ID=1"
         "CLOSURE_BUILD_SOCKET_MODE=0660"
         "CLOSURE_BUILD_SOCKET_GROUP=users"
         "RUST_LOG=info"
