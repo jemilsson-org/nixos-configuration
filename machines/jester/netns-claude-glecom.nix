@@ -40,35 +40,42 @@ in
     setuid = true;
   };
 
-  # claude-glecom wrapper: runs claude inside the namespace with its own config dir
-  environment.systemPackages = [
-    (pkgs.writeShellScriptBin "claude-glecom" ''
-      # Sync mcpServers from main Claude config so both profiles expose the same MCPs.
-      # Everything else (oauthAccount, projects, subscription state) stays isolated.
-      src="$HOME/.claude.json"
-      dst="$HOME/.claude-glecom/.claude.json"
-      if [ -f "$src" ] && [ -f "$dst" ]; then
-        mcp=$(${pkgs.jq}/bin/jq -c .mcpServers "$src" 2>/dev/null)
-        if [ -n "$mcp" ] && [ "$mcp" != "null" ]; then
-          tmp=$(${pkgs.coreutils}/bin/mktemp "$dst.XXXXXX")
-          if ${pkgs.jq}/bin/jq --argjson mcp "$mcp" '
-              .mcpServers = ($mcp | walk(
-                if type == "string"
-                then gsub("http://127\\.0\\.0\\.1:"; "http://10.200.200.1:")
-                else . end
-              ))' "$dst" > "$tmp"; then
-            ${pkgs.coreutils}/bin/mv "$tmp" "$dst"
-          else
-            ${pkgs.coreutils}/bin/rm -f "$tmp"
-            echo "claude-glecom: mcp sync failed, continuing" >&2
+  # claude-glecom wrapper: runs claude inside the namespace with its own config dir.
+  # claude-glecom-local: same config dir, no namespace (MCP servers stay on loopback).
+  environment.systemPackages =
+    let
+      wrapper = name: mcpHost: execPrefix:
+        pkgs.writeShellScriptBin name ''
+          # Sync mcpServers from main Claude config so both profiles expose the same MCPs.
+          # Everything else (oauthAccount, projects, subscription state) stays isolated.
+          src="$HOME/.claude.json"
+          dst="$HOME/.claude-glecom/.claude.json"
+          if [ -f "$src" ] && [ -f "$dst" ]; then
+            mcp=$(${pkgs.jq}/bin/jq -c .mcpServers "$src" 2>/dev/null)
+            if [ -n "$mcp" ] && [ "$mcp" != "null" ]; then
+              tmp=$(${pkgs.coreutils}/bin/mktemp "$dst.XXXXXX")
+              if ${pkgs.jq}/bin/jq --argjson mcp "$mcp" '
+                  .mcpServers = ($mcp | walk(
+                    if type == "string"
+                    then gsub("http://127\\.0\\.0\\.1:"; "http://${mcpHost}:")
+                    else . end
+                  ))' "$dst" > "$tmp"; then
+                ${pkgs.coreutils}/bin/mv "$tmp" "$dst"
+              else
+                ${pkgs.coreutils}/bin/rm -f "$tmp"
+                echo "${name}: mcp sync failed, continuing" >&2
+              fi
+            fi
           fi
-        fi
-      fi
-      exec /run/wrappers/bin/nsenter-claude-glecom \
-        env HOME="$HOME" CLAUDE_CONFIG_DIR="$HOME/.claude-glecom" \
-        claude "$@"
-    '')
-  ];
+          exec ${execPrefix} \
+            env HOME="$HOME" CLAUDE_CONFIG_DIR="$HOME/.claude-glecom" \
+            claude "$@"
+        '';
+    in
+    [
+      (wrapper "claude-glecom" "10.200.200.1" "/run/wrappers/bin/nsenter-claude-glecom")
+      (wrapper "claude-glecom-local" "127.0.0.1" "")
+    ];
 
   # wg2: move Claude Code CIDRs out of main table into table 200
   # so regular processes use the default route for those destinations
