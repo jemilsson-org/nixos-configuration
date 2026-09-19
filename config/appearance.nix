@@ -97,6 +97,11 @@ in
         <rejectfont>
           <pattern><patelt name="family"><string>Liberation Sans</string></patelt></pattern>
         </rejectfont>
+        <!-- wine-fonts system.ttf: family "System", empty charset. Web font
+             stacks starting with "system" match it and render no glyphs. -->
+        <rejectfont>
+          <pattern><patelt name="family"><string>System</string></patelt></pattern>
+        </rejectfont>
       </selectfont>
     </fontconfig>
   '';
