@@ -60,7 +60,7 @@ in
   };
 
   # Enhanced font configuration with priority enforcement and rejection rules
-  environment.etc."xdg/fontconfig/conf.d/00-force-ibm-plex.conf".text = ''
+  fonts.fontconfig.confPackages = [ (pkgs.writeTextDir "etc/fonts/conf.d/00-force-ibm-plex.conf" ''
     <?xml version="1.0"?>
     <!DOCTYPE fontconfig SYSTEM "fonts.dtd">
     <fontconfig>
@@ -80,9 +80,9 @@ in
         <prefer><family>IBM Plex Mono</family></prefer>
       </alias>
     </fontconfig>
-  '';
+    '')
 
-  environment.etc."xdg/fontconfig/conf.d/01-reject-problematic-fonts.conf".text = ''
+    (pkgs.writeTextDir "etc/fonts/conf.d/01-reject-problematic-fonts.conf" ''
     <?xml version="1.0"?>
     <!DOCTYPE fontconfig SYSTEM "fonts.dtd">
     <fontconfig>
@@ -104,9 +104,9 @@ in
         </rejectfont>
       </selectfont>
     </fontconfig>
-  '';
+    '')
 
-  environment.etc."xdg/fontconfig/conf.d/02-vegur-headings.conf".text = ''
+    (pkgs.writeTextDir "etc/fonts/conf.d/02-vegur-headings.conf" ''
     <?xml version="1.0"?>
     <!DOCTYPE fontconfig SYSTEM "fonts.dtd">
     <fontconfig>
@@ -121,9 +121,9 @@ in
         <prefer><family>Vegur</family></prefer>
       </alias>
     </fontconfig>
-  '';
+    '')
 
-  environment.etc."xdg/fontconfig/conf.d/10-ibm-plex-mapping.conf".text = ''
+    (pkgs.writeTextDir "etc/fonts/conf.d/10-ibm-plex-mapping.conf" ''
     <?xml version="1.0"?>
     <!DOCTYPE fontconfig SYSTEM "fonts.dtd">
     <fontconfig>
@@ -183,7 +183,8 @@ in
         <edit name="family" mode="assign" binding="strong"><string>IBM Plex Mono</string></edit>
       </match>
     </fontconfig>
-  '';
+    '')
+  ];
 
   # GTK theming configuration
   programs.dconf.enable = true;

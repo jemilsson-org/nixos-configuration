@@ -55,7 +55,7 @@
   };
 
   # Configure default fonts for various applications
-  environment.etc."xdg/fontconfig/conf.d/10-ibm-plex.conf".text = ''
+  fonts.fontconfig.confPackages = [ (pkgs.writeTextDir "etc/fonts/conf.d/10-ibm-plex.conf" ''
     <?xml version="1.0"?>
     <!DOCTYPE fontconfig SYSTEM "fonts.dtd">
     <fontconfig>
@@ -96,7 +96,7 @@
         </edit>
       </match>
     </fontconfig>
-  '';
+  '') ];
 
   # Terminal font configuration is handled by user dotfiles
   # Alacritty and Foot configurations are in ~/.config/
