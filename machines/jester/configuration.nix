@@ -305,14 +305,6 @@ in
   # mkDefault true. Saves a daemon and a per-boot probe.
   networking.modemmanager.enable = false;
 
-  systemd.services.restart-fprintd-on-resume = {
-    description = "Restart fprintd after resume from sleep";
-    wantedBy = [ "post-resume.target" ];
-    after = [ "post-resume.target" ];
-    script = "systemctl restart fprintd";
-    serviceConfig.Type = "oneshot";
-  };
-
   systemd.tmpfiles.rules = [
     "L+    /opt/rocm/hip   -    -    -     -    ${pkgs.rocmPackages.clr}"
     # Seed portal-login's SSID -> pass-entry mapping on first boot only ("C"
@@ -933,8 +925,10 @@ in
   # claimed"; that denial used to trigger the stale-claim reaper to restart
   # fprintd mid-verify, and hyprlock then hung after unlock (2026-09-11).
   # Disabling pam_fprintd here leaves hyprlock's native path as the only
-  # claimant. The hyprlock-wrapper EXIT trap still restarts fprintd after
-  # hyprlock exits.
+  # claimant. Nothing restarts fprintd automatically now: hyprlock claims the
+  # sensor once and never reconnects to a restarted fprintd, so a restart
+  # would break the next lock; the polkit rule below stays as a manual escape
+  # hatch.
   security.pam.services.hyprlock.fprintAuth = false;
 
   # Allow jonas to restart fprintd without a password (needed to clear stale

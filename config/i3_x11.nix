@@ -85,17 +85,6 @@ in
 
       services = {
 
-        hypridle-resume = {
-          enable = true;
-          description = "Ensure hyprlock runs after resume";
-          after = [ "suspend.target" "hibernate.target" "hybrid-sleep.target" ];
-          wantedBy = [ "suspend.target" "hibernate.target" "hybrid-sleep.target" ];
-          serviceConfig = {
-            Type = "oneshot";
-            ExecStart = "${pkgs.bash}/bin/bash -c '${pkgs.coreutils}/bin/sleep 1 && export HYPRLAND_INSTANCE_SIGNATURE=$(${pkgs.coreutils}/bin/ls -t /tmp/hypr/ 2>/dev/null | ${pkgs.coreutils}/bin/head -1) && export WAYLAND_DISPLAY=wayland-1 && ${pkgs.unstable.hyprland}/bin/hyprctl dispatch dpms on && ${pkgs.procps}/bin/pidof hyprlock || ${pkgs.unstable.hyprlock}/bin/hyprlock'";
-          };
-        };
-
         kanshi = {
           enable = true;
           description = "kanshi";
