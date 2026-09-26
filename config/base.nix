@@ -202,6 +202,7 @@ in
   programs = {
     mosh.enable = true;
     zsh = {
+      interactiveShellInit = ''eval "$(${pkgs.atuin}/bin/atuin init zsh)"'';
       ohMyZsh = {
         plugins = [
           "pass"
@@ -212,7 +213,7 @@ in
           "mosh"
           "python"
           "wd"
-          "per-directory-history"
+          # per-directory-history removed: conflicts with atuin keybinds
           "zsh_codex"
         ];
       };
@@ -226,6 +227,7 @@ in
     #loginShellInit = "hostname | figlet -f big; fortune -a -s | cowsay";
 
     systemPackages = with pkgs; [
+      atuin
       # Interactive cargo/rustc caps via CARGO_MEMORY_HIGH/MAX + CARGO_CPU_QUOTA.
       # Note: only the env-var caps (CARGO_BUILD_JOBS etc.) reach the rustup/devenv
       # cargos that shadow this wrapper; the scope caps apply when it is invoked.
