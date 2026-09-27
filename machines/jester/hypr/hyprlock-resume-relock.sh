@@ -1,6 +1,9 @@
 #!/run/current-system/sw/bin/bash
 # Workaround for an upstream hyprlock bug (0.9.6), not a fix. Runs from
-# hypridle's after_sleep_cmd on resume.
+# hypridle's after_sleep_cmd on resume, and also invoked directly by
+# hyprlock-wrapper's arm-check watcher (--replace-pids) after every lock,
+# whether or not a suspend was involved: the same "sensor never armed" and
+# "SIGUSR1 unlock deadlock" failures both happen on plain idle locks.
 #
 # Observed, not inferred: hyprlock arms the fingerprint reader correctly at
 # lock time (fprint: started verifying, within 1s). On suspend/resume it logs
@@ -81,7 +84,17 @@ fi
 
 /run/current-system/sw/bin/hyprctl dispatch dpms on
 
-old_pids="$(/run/current-system/sw/bin/pgrep -x hyprlock || true)"
+# --replace-pids from the arm-check watcher hands us the exact PID it
+# already verified is stuck (dead sensor or wedged SIGUSR1 unlock), so we
+# don't re-derive it with pgrep: pgrep here could also catch a second,
+# unrelated hyprlock that raced in between the watcher's check and this
+# call, and killing that one would be a plain misfire.
+if [ "${1:-}" = "--replace-pids" ]; then
+    old_pids="$2"
+    shift 2
+else
+    old_pids="$(/run/current-system/sw/bin/pgrep -x hyprlock || true)"
+fi
 
 if [ -n "$old_pids" ]; then
     /run/current-system/sw/bin/pkill -KILL -x hyprlock
@@ -157,8 +170,14 @@ if [ "$started" -eq 0 ]; then
     #   1. SUPER + SHIFT + CTRL + ALT + U (~/.config/hypr/hyprland.lua),
     #      which calls hl.clear_crashed_lockscreen(). This only works when
     #      no live lock client still holds the lock.
-    #   2. Switch to another TTY and run: pkill -USR1 -x hyprlock
-    msg="resume-relock: hyprlock failed to start after $max_attempts attempts; leaving session LOCKED with no lock client running (deliberate, no auto-unlock). Recover via SUPER+SHIFT+CTRL+ALT+U, or from another TTY: pkill -USR1 -x hyprlock"
+    #   2. Switch to another TTY and run: hyprlock-resume-relock
+    #      Not pkill -USR1 -x hyprlock: handleUnlockSignal takes timersMutex
+    #      from signal-handler context and can deadlock against the timers
+    #      thread, so SIGUSR1 can log "Unlocking with a SIGUSR1" and then
+    #      just sit there forever instead of exiting (verified 2026-09-28,
+    #      PID 913371, five times). hyprlock-resume-relock SIGKILLs and
+    #      verifies by PID instead, which isn't subject to that hang.
+    msg="resume-relock: hyprlock failed to start after $max_attempts attempts; leaving session LOCKED with no lock client running (deliberate, no auto-unlock). Recover via SUPER+SHIFT+CTRL+ALT+U, or from another TTY: hyprlock-resume-relock (not pkill -USR1 -x hyprlock, which can deadlock)"
     log_err "$msg"
     exit 1
 fi
