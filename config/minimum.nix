@@ -4,13 +4,22 @@
   programs = {
     zsh = {
       enable = true;
-      autosuggestions = {
-        enable = true;
-      };
-      syntaxHighlighting = {
-        enable = true;
-      };
-      promptInit = "source ${pkgs.zsh-powerlevel9k}/share/zsh-powerlevel9k/powerlevel9k.zsh-theme";
+      # compinit, autosuggestions, syntax highlighting and the prompt theme
+      # are all done from interactiveShellInit below (instead of the usual
+      # module options) so they can be skipped in one place when Claude Code
+      # drives the shell ($CLAUDECODE=1): none of them are needed for a
+      # non-interactive-ish `zsh -i -c ...` run and they dominate interactive
+      # startup time. Human shells are unaffected.
+      enableGlobalCompInit = false;
+      interactiveShellInit = ''
+        if [[ -z "$CLAUDECODE" ]]; then
+          autoload -Uz compinit
+          compinit
+          source ${pkgs.zsh-autosuggestions}/share/zsh-autosuggestions/zsh-autosuggestions.zsh
+          source ${pkgs.zsh-syntax-highlighting}/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+          source ${pkgs.zsh-powerlevel9k}/share/zsh-powerlevel9k/powerlevel9k.zsh-theme
+        fi
+      '';
     };
   };
 

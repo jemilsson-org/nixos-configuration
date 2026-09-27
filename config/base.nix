@@ -202,7 +202,12 @@ in
   programs = {
     mosh.enable = true;
     zsh = {
-      interactiveShellInit = ''eval "$(${pkgs.atuin}/bin/atuin init zsh)"'';
+      # Skip atuin init when Claude Code drives the shell ($CLAUDECODE=1):
+      # it's not needed for a non-interactive-ish `zsh -i -c ...` run and it
+      # adds to interactive startup time.
+      interactiveShellInit = ''
+        if [[ -z "$CLAUDECODE" ]]; then eval "$(${pkgs.atuin}/bin/atuin init zsh)"; fi
+      '';
       ohMyZsh = {
         plugins = [
           "pass"
