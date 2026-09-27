@@ -60,6 +60,7 @@ in
     #./graphiti.nix
     #./mcpo.nix
     ./camera.nix
+    ./v4l2loopback.nix
     ./room-watch.nix
     ./presence-lock.nix
     ./netns-claude-glecom.nix

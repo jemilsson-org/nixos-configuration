@@ -202,11 +202,9 @@ let
   '';
 in
 {
-  boot.extraModulePackages = [ config.boot.kernelPackages.v4l2loopback ];
-  boot.kernelModules = [ "v4l2loopback" ];
-  boot.extraModprobeConfig = ''
-    options v4l2loopback video_nr=42 card_label=room-watch exclusive_caps=1
-  '';
+  # v4l2loopback kernel-module config (video_nr=42, card_label=room-watch)
+  # lives in ./v4l2loopback.nix, shared with presence-lock.nix: the module is
+  # a single instance and its options can't be split across two stanzas.
 
   systemd.user.services.room-watch-feed = {
     description = "PipeWire camera feed into v4l2loopback for room-watch";

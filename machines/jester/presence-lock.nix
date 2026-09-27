@@ -55,11 +55,9 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    boot.extraModulePackages = [ config.boot.kernelPackages.v4l2loopback ];
-    boot.kernelModules = [ "v4l2loopback" ];
-    boot.extraModprobeConfig = ''
-      options v4l2loopback video_nr=43 card_label=presence-lock exclusive_caps=1
-    '';
+    # v4l2loopback kernel-module config (video_nr=43, card_label=presence-lock)
+    # lives in ./v4l2loopback.nix, shared with room-watch.nix: the module is a
+    # single instance and its options can't be split across two stanzas.
 
     systemd.user.services.presence-lock-feed = {
       description = "PipeWire camera feed into v4l2loopback for presence-lock";
