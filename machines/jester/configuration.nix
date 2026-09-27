@@ -1105,6 +1105,12 @@ in
       ServerAliveInterval 15
       ServerAliveCountMax 5
       ConnectTimeout 30
+      # Multiplex nix-daemon's per-derivation ssh-ng connections over one
+      # master so cold-start/handshake cost is paid once, not per build.
+      # /run: root-owned tmpfs, cleared on reboot (fine for a control socket).
+      ControlMaster auto
+      ControlPath /run/closure-build-cm-%r@%h:%p
+      ControlPersist 10m
   '';
 
   # Prevent nix-daemon crash on boot: Settings static initializer dereferences
