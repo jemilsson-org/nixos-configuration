@@ -801,6 +801,21 @@ in
       (builtins.readFile ./hypr/monitor-setup.py))
     (pkgs.writeShellScriptBin "hypr-monitor-events"
       (builtins.readFile ./hypr/handle-monitor-events.sh))
+    # hyprlock single-instance wrapper (flock guard + per-session log capture).
+    # See the script for why: diagnosing a post-resume fingerprint/auth
+    # lockout needed per-session logs, since hyprlock's stdout is otherwise an
+    # inherited socket.
+    (pkgs.writeShellScriptBin "hyprlock-wrapper"
+      (builtins.readFile ./hypr/hyprlock-wrapper.sh))
+    # Workaround for the same lockout: hypridle's after_sleep_cmd calls this to
+    # replace hyprlock on resume, because hyprlock never re-arms the
+    # fingerprint reader after suspend. See the script for the full mechanism.
+    (pkgs.writeShellScriptBin "hyprlock-resume-relock"
+      (builtins.readFile ./hypr/hyprlock-resume-relock.sh))
+    # `libinput debug-events` CLI, for diagnosing post-resume input state:
+    # whether key-release events go missing across a suspend/resume cycle
+    # (a candidate cause of the post-resume password auth failures).
+    libinput
     # Credential store read by portal-login; not otherwise on PATH.
     pass
     cargo-sweep
