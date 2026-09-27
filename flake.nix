@@ -21,6 +21,7 @@
     };
     claude-code = {
       url = "github:sadjow/claude-code-nix";
+      inputs.nixpkgs.follows = "nixpkgs-unstable";
     };
     nixos-wsl = {
       url = "github:nix-community/NixOS-WSL/main";
