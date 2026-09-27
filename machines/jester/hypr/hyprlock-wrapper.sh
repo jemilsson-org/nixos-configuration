@@ -98,10 +98,17 @@ fi
 # below replaces this shell's process image, and exec discards any pending
 # trap along with the shell itself. The trap can only fire if exec fails to
 # start hyprlock in the first place (binary missing or not executable), in
-# which case this shell keeps running and the EXIT trap covers that one case:
-# clearing logind LockedHint so apps reading session lock state
-# (fafnir-approve) don't block on a stale flag.
+# which case this shell keeps running and the EXIT trap covers that one case.
+# Deliberately no unlock here: by the time we reach this line, the flock
+# above (line 6) is already held, so no other hyprlock instance is running;
+# if exec then fails, hyprlock never started, no ext-session-lock client ever
+# bound, and the compositor holds no lock object from this wrapper. There is
+# nothing real to strand the user in. Per the never-auto-unlock rule, this
+# case still just logs loudly and leaves the session locked (LockedHint
+# stays set) rather than clearing it. Recovery: SUPER+SHIFT+CTRL+ALT+U, or
+# `hyprlock-resume-relock` from another TTY. NOT `pkill -USR1`, which can
+# deadlock in handleUnlockSignal (see arm-check comment above).
 # No fprintd restart: fprintd drops a claim when its D-Bus owner exits, and
 # hyprlock never reconnects to a restarted fprintd.
-trap '/run/current-system/sw/bin/loginctl unlock-session' EXIT
+trap 'echo "$(/run/current-system/sw/bin/date -Iseconds) exec failed to start hyprlock; session remains locked" >>"$log_file"' EXIT
 exec /run/current-system/sw/bin/hyprlock "$@" >>"$log_file" 2>&1
