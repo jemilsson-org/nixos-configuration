@@ -262,6 +262,14 @@ in
   };
   systemd.user.services.fafnir.serviceConfig.ManagedOOMPreference = "avoid";
   systemd.user.services.fafnir-openpgp.serviceConfig.ManagedOOMPreference = "avoid";
+  # Point hypridle at the Nix-managed config instead of the default
+  # ~/.config/hypr/hypridle.conf. A store path can't drift out of sync with
+  # the lock_cmd/after_sleep_cmd scripts it points at the way the hand-edited
+  # file did (it kept calling stale paths and left the Nix-built relock fix
+  # inert). mkForce: the upstream module sets ExecStart to a plain
+  # "hypridle" invocation with no -c flag.
+  systemd.user.services.hypridle.serviceConfig.ExecStart = lib.mkForce
+    "${config.services.hypridle.package}/bin/hypridle -c ${./hypr/hypridle.conf}";
   # Protect the Claude Code agent session (runs under teleclaude.service in
   # app.slice at oom_score~800 with ManagedOOMPreference=none, i.e. a default
   # oomd candidate). Mark it avoid-last so oomd sacrifices builds/chromium/the

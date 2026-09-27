@@ -20,9 +20,13 @@ log_file="$log_dir/$(/run/current-system/sw/bin/date +%Y%m%d-%H%M%S)-$$.log"
 /run/current-system/sw/bin/ls -1t "$log_dir" 2>/dev/null | /run/current-system/sw/bin/tail -n +51 | \
     while IFS= read -r old; do /run/current-system/sw/bin/rm -f "$log_dir/$old"; done
 
-# On any exit (normal, crash, signal): clear logind LockedHint so apps reading
-# session lock state (fafnir-approve) don't block on a stale flag if hyprlock
-# crashes or fails to render.
+# This trap does NOT run when hyprlock exits, crashes, or is killed. exec
+# below replaces this shell's process image, and exec discards any pending
+# trap along with the shell itself. The trap can only fire if exec fails to
+# start hyprlock in the first place (binary missing or not executable), in
+# which case this shell keeps running and the EXIT trap covers that one case:
+# clearing logind LockedHint so apps reading session lock state
+# (fafnir-approve) don't block on a stale flag.
 # No fprintd restart: fprintd drops a claim when its D-Bus owner exits, and
 # hyprlock never reconnects to a restarted fprintd.
 trap '/run/current-system/sw/bin/loginctl unlock-session' EXIT

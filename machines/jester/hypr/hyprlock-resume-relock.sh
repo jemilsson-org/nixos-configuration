@@ -32,17 +32,81 @@
 # own *unlock* paths and would drop the session lock instead of replacing it.
 set -u
 
-/run/current-system/sw/bin/hyprctl dispatch dpms on
+log_err() {
+    if [ -x /run/current-system/sw/bin/systemd-cat ]; then
+        echo "$1" | /run/current-system/sw/bin/systemd-cat -t hyprlock-resume-relock -p err
+    else
+        /run/current-system/sw/bin/logger -t hyprlock-resume-relock -p err "$1"
+    fi
+}
 
-if /run/current-system/sw/bin/pgrep -x hyprlock >/dev/null; then
-    /run/current-system/sw/bin/pkill -KILL -x hyprlock
-    # Wait for the flock on fd 9 to clear. If we start the wrapper too soon,
-    # its single-instance guard sees the stale lock and exits 0, leaving no
-    # lock client at all.
-    for _ in $(/run/current-system/sw/bin/seq 1 40); do
-        /run/current-system/sw/bin/pgrep -x hyprlock >/dev/null || break
+# Check the two Hyprland options this whole workaround depends on before we
+# kill anything. If the compositor will not actually restore the lock (either
+# option missing or wrong), killing the running hyprlock opens the exact
+# desktop-exposure window this script exists to prevent: better to leave the
+# existing (broken-auth) lock client in place than to gamble on a compositor
+# that will not take the replacement back. Prefer jq if present; fall back to
+# grep/sed rather than pull in a new dependency.
+check_option() {
+    opt="$1"
+    want="$2"
+    json=""
+    # hyprctl talks to Hyprland over its IPC socket, which can be briefly
+    # unavailable right at resume. Retry a few times before giving up, so one
+    # flaky call does not abort the whole relock and strand the user behind
+    # the old, auth-broken hyprlock.
+    for _ in 1 2 3 4 5; do
+        json="$(/run/current-system/sw/bin/hyprctl getoption "$opt" -j 2>/dev/null)" && [ -n "$json" ] && break
+        json=""
         /run/current-system/sw/bin/sleep 0.25
     done
+    [ -n "$json" ] || return 1
+    if [ -x /run/current-system/sw/bin/jq ]; then
+        val="$(echo "$json" | /run/current-system/sw/bin/jq -r '.int // .str // empty' 2>/dev/null)" || return 1
+    else
+        val="$(echo "$json" | /run/current-system/sw/bin/grep -o '"int"[[:space:]]*:[[:space:]]*[-0-9]*' | /run/current-system/sw/bin/sed -E 's/.*:[[:space:]]*//')"
+    fi
+    [ -n "$val" ] || return 1
+    [ "$val" = "$want" ]
+}
+
+if ! check_option misc:allow_session_lock_restore 1; then
+    log_err "resume-relock: misc:allow_session_lock_restore is not verifiably true; refusing to kill hyprlock (compositor would not restore the lock)"
+    exit 1
+fi
+if ! check_option misc:lockdead_screen_delay 0; then
+    log_err "resume-relock: misc:lockdead_screen_delay is not verifiably 0; refusing to kill hyprlock (desktop could render before the replacement binds)"
+    exit 1
+fi
+
+/run/current-system/sw/bin/hyprctl dispatch dpms on
+
+old_pids="$(/run/current-system/sw/bin/pgrep -x hyprlock || true)"
+
+if [ -n "$old_pids" ]; then
+    /run/current-system/sw/bin/pkill -KILL -x hyprlock
+    # Wait on the specific old PIDs, not on the process name. Waiting on the
+    # name is what let a stuck old hyprlock (e.g. blocked in D state on the
+    # fingerprint ioctl) be mistaken for gone: the name check just times out
+    # silently and the start loop below can then match that same stale,
+    # auth-broken process and call it success.
+    for _ in $(/run/current-system/sw/bin/seq 1 40); do
+        still=0
+        for pid in $old_pids; do
+            /run/current-system/sw/bin/kill -0 "$pid" 2>/dev/null && still=1
+        done
+        [ "$still" -eq 1 ] || break
+        /run/current-system/sw/bin/sleep 0.25
+    done
+
+    surviving=""
+    for pid in $old_pids; do
+        /run/current-system/sw/bin/kill -0 "$pid" 2>/dev/null && surviving="$surviving $pid"
+    done
+    if [ -n "$surviving" ]; then
+        log_err "resume-relock: old hyprlock PID(s)$surviving still alive after SIGKILL and 10s wait; the kill did not take effect. Not starting a replacement, since the flock on fd 9 would make it a silent no-op against the surviving process."
+        exit 1
+    fi
 fi
 
 # The flock on fd 9 (in hyprlock-wrapper) releases the instant the old
@@ -57,12 +121,19 @@ started=0
 while [ "$attempt" -le "$max_attempts" ]; do
     /run/current-system/sw/bin/hyprlock-wrapper &
 
-    # Give hyprlock up to ~3 seconds to actually appear.
+    # Give hyprlock up to ~3 seconds to actually appear. A pgrep hit on one of
+    # the old PIDs must not count: if the earlier kill did not fully take
+    # effect this would otherwise report success while the stale, auth-broken
+    # process is still what's showing.
     for _ in $(/run/current-system/sw/bin/seq 1 12); do
-        if /run/current-system/sw/bin/pgrep -x hyprlock >/dev/null; then
-            started=1
-            break
-        fi
+        new_pids="$(/run/current-system/sw/bin/pgrep -x hyprlock || true)"
+        for pid in $new_pids; do
+            case " $old_pids " in
+                *" $pid "*) ;;
+                *) started=1 ;;
+            esac
+        done
+        [ "$started" -eq 1 ] && break
         sleep 0.25
     done
 
@@ -75,34 +146,19 @@ while [ "$attempt" -le "$max_attempts" ]; do
 done
 
 if [ "$started" -eq 0 ]; then
-    # All 3 attempts failed to bring up a lock client. The compositor is
-    # already showing a blank, locked screen with nothing listening for
-    # input: that is a worse outcome than an unlocked session, because a
-    # blank screen with no lock client cannot be authenticated into at all
-    # and traps the user. So log loudly, then fall back to unlocking the
-    # session as a last resort rather than stranding the user forever.
-    msg="resume-relock: hyprlock failed to start after $max_attempts attempts; unlocking session as last resort"
-    if [ -x /run/current-system/sw/bin/systemd-cat ]; then
-        echo "$msg" | /run/current-system/sw/bin/systemd-cat -t hyprlock-resume-relock -p err
-    else
-        /run/current-system/sw/bin/logger -t hyprlock-resume-relock -p err "$msg"
-    fi
-    # Only unlock if the session is really still locked. hyprlock-wrapper's own
-    # EXIT trap already runs loginctl unlock-session whenever hyprlock exits or
-    # fails to start, so by the time we get here the session is often already
-    # unlocked. This guard avoids unlocking a session that was never locked
-    # (or was already unlocked by the trap); it still lets the fallback fire
-    # in the case that matters, where hyprlock is hung and never exits, so
-    # the trap never ran and the session is still genuinely locked.
-    locked="$(/run/current-system/sw/bin/loginctl show-session self -p LockedHint 2>/dev/null)"
-    if [ "$locked" = "LockedHint=yes" ]; then
-        /run/current-system/sw/bin/loginctl unlock-session
-    else
-        msg2="resume-relock: session already unlocked (LockedHint not yes), skipping fallback unlock"
-        if [ -x /run/current-system/sw/bin/systemd-cat ]; then
-            echo "$msg2" | /run/current-system/sw/bin/systemd-cat -t hyprlock-resume-relock -p info
-        else
-            /run/current-system/sw/bin/logger -t hyprlock-resume-relock -p info "$msg2"
-        fi
-    fi
+    # All 3 attempts failed to bring up a lock client. Dropping the session
+    # lock here without authenticating the user would be a lock bypass, so
+    # this script never does that, no matter how long the screen stays
+    # blank. Log loudly and leave the session locked; exit non-zero so the
+    # failure shows up as a failed unit too.
+    #
+    # Two recovery routes exist from this state, and this comment is the
+    # only place they are written down:
+    #   1. SUPER + SHIFT + CTRL + ALT + U (~/.config/hypr/hyprland.lua),
+    #      which calls hl.clear_crashed_lockscreen(). This only works when
+    #      no live lock client still holds the lock.
+    #   2. Switch to another TTY and run: pkill -USR1 -x hyprlock
+    msg="resume-relock: hyprlock failed to start after $max_attempts attempts; leaving session LOCKED with no lock client running (deliberate, no auto-unlock). Recover via SUPER+SHIFT+CTRL+ALT+U, or from another TTY: pkill -USR1 -x hyprlock"
+    log_err "$msg"
+    exit 1
 fi
