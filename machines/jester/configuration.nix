@@ -1102,8 +1102,12 @@ in
       # 15s: deployed builder sshd reaps idle sessions at ClientAliveInterval
       # 10s x3; client keepalives must arrive inside that 30s window or
       # inter-derivation stalls kill the session (Broken pipe mid-upload).
+      # CountMax 2 (30s total): also bounds how long a dead ControlMaster
+      # goes undetected, so a wedged TCP session (master survives but the
+      # peer is gone) gets torn down instead of hanging every subsequent
+      # multiplexed ssh-ng call until the control socket is deleted by hand.
       ServerAliveInterval 15
-      ServerAliveCountMax 5
+      ServerAliveCountMax 2
       ConnectTimeout 30
       # Multiplex nix-daemon's per-derivation ssh-ng connections over one
       # master so cold-start/handshake cost is paid once, not per build.
