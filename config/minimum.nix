@@ -11,6 +11,10 @@
       # non-interactive-ish `zsh -i -c ...` run and they dominate interactive
       # startup time. Human shells are unaffected.
       enableGlobalCompInit = false;
+      # Empty out the module's default promptInit ("prompt suse"): it runs
+      # after interactiveShellInit and would otherwise stomp the powerlevel9k
+      # PROMPT set below on every login.
+      promptInit = "";
       interactiveShellInit = ''
         if [[ -z "$CLAUDECODE" ]]; then
           autoload -Uz compinit
