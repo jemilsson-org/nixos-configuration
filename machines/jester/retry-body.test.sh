@@ -181,6 +181,36 @@ exit 1'
 run nix nonstore_invalid build .#foo
 check "non-store path-not-valid not retried" 1 "$(calls nonstore_invalid)"
 
+# 6i. REGRESSION (tee-pipe hang): $real exits immediately (success or failure)
+#     but leaves behind a lingering background grandchild that still holds an
+#     inherited fd open (the ssh -M ControlMaster mux case in production).
+#     With stderr routed through a pipe/tee, the pipeline never sees EOF and
+#     hangs forever even though $real already returned. Assert the wrapper
+#     returns within a few seconds regardless, for both a successful and a
+#     failing $real.
+run_with_timeout() { # seconds, kind, fake, args... -> sets RC (124 = timed out)
+  local secs=$1 kind=$2 fake=$3; shift 3
+  timeout "$secs" "$BASH_BIN" -c '
+      real="$1"; RETRY_KIND="$2"; shift 2; source "$0" "$@"
+    ' "$BODY" "$tmp/$fake" "$kind" "$@"
+  RC=$?
+}
+
+make_fake lingering_child_ok '
+( sleep 5; echo "late child output" ) >&2 &
+disown
+exit 0'
+run_with_timeout 8 nix lingering_child_ok build .#foo
+check "lingering-child success returns promptly (not timed out)" 0 "$RC"
+
+make_fake lingering_child_fail '
+( sleep 5; echo "late child output" ) >&2 &
+disown
+echo "error: builder failed with exit code 101" >&2
+exit 101'
+run_with_timeout 8 nix lingering_child_fail build .#foo
+check "lingering-child genuine failure returns promptly" 101 "$RC"
+
 echo
 echo "## nixos-rebuild wrapper (RETRY_KIND=nixos-rebuild)"
 

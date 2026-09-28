@@ -20,7 +20,7 @@
 #   $real         absolute path to the real binary being wrapped
 #   $RETRY_KIND   "nix" or "nixos-rebuild" (selects which subcommands retry)
 #   "$@"          the invocation args (source preserves the caller's positionals)
-# Tools (mktemp/tee/grep/sleep) come from PATH; the wrappers prepend them and
+# Tools (mktemp/tail/grep/sleep) come from PATH; the wrappers prepend them and
 # the test relies on the system PATH.
 #
 # Env overrides (used by the test to run fast and bounded):
@@ -121,23 +121,44 @@ retry_main() {
   # (exec = zero overhead, preserves TTY/stdin/signals/exit).
   retry_wraps "$@" || exec "$real" "$@"
 
-  local max="${RETRY_MAX:-4}" attempt=1 err="" rc delay
-  # Clean the in-flight capture file on Ctrl-C / SIGTERM (the in-loop rm only
-  # runs on a normal pipeline return); a clean Ctrl-C also aborts immediately
-  # rather than spinning the retry loop.
-  trap 'rm -f "$err"; exit 130' INT TERM
+  local max="${RETRY_MAX:-4}" attempt=1 err="" rc delay realpid="" tailpid=""
+  # Clean the in-flight capture file and children on Ctrl-C / SIGTERM (the
+  # in-loop rm only runs on a normal return); a clean Ctrl-C also aborts
+  # immediately rather than spinning the retry loop.
+  trap 'kill "$realpid" "$tailpid" 2>/dev/null; rm -f "$err"; exit 130' INT TERM
 
   while :; do
     err=$(mktemp)
-    # Race-free capture that PRESERVES stdout (so --json / --print-out-paths are
-    # untouched): cmd stdout -> fd3 -> real stdout; cmd stderr -> pipe -> tee
-    # (file + real stderr). The pipe guarantees tee has flushed $err before the
-    # pipeline returns, and PIPESTATUS[0] is the command's own exit code.
-    # NOTE: routing stderr through tee makes the command's fd 2 a pipe, not a
-    # TTY, so nix falls back from its animated progress bar to plain per-line
-    # logs. Accepted tradeoff for transparent retry.
-    { "$real" "$@" 2>&1 1>&3 | tee "$err" >&2; } 3>&1
-    rc=${PIPESTATUS[0]}
+    # Capture stderr to a plain FILE, never a pipe: a pipe's write fd is
+    # inherited by every grandchild $real forks, including the ssh -M
+    # ControlMaster mux nix keeps alive for ssh-ng://builder@closure-build. If
+    # such a mux child outlives $real (e.g. it's still reconnecting after a
+    # "Nix daemon disconnected unexpectedly" drop), it holds the pipe's write
+    # end open forever; `tee` then never sees EOF and never exits, and the
+    # command hangs indefinitely even though $real already exited with the
+    # right code (observed: 435/435 checks pass, then a ~60min hang). A
+    # regular file has no such handle for a grandchild to hold.
+    # $real runs backgrounded so we can `wait` on ITS pid for the exit code
+    # (never on however long a stream consumer takes); `tail -f --pid=` mirrors
+    # $err to the terminal live and exits on its own once that pid is gone,
+    # not on pipe EOF. stdout is untouched (inherited directly), so --json /
+    # --print-out-paths pass through unmodified.
+    # NOTE: stderr goes to a file, not a TTY, so nix falls back from its
+    # animated progress bar to plain per-line logs. Accepted tradeoff for
+    # transparent retry (unchanged from before this fix).
+    "$real" "$@" 2>>"$err" &
+    realpid=$!
+    tail -n +1 -f --pid="$realpid" "$err" >&2 &
+    tailpid=$!
+    wait "$realpid"
+    rc=$?
+    # Don't wait out tail's own --pid poll interval (up to ~1s per attempt):
+    # $err already has the full output by the time $real has exited (its
+    # writes are synchronous appends, and tail -f follows via inotify), so the
+    # live mirror to the terminal has nothing further to add. Killing it here
+    # is a display-only optimization; retry_is_transient reads $err directly.
+    kill "$tailpid" 2>/dev/null
+    wait "$tailpid" 2>/dev/null
     if [ "$rc" -eq 0 ]; then
       rm -f "$err"
       return 0

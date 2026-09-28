@@ -43,7 +43,7 @@
 let
   # writeShellScriptBin produces a plain bash script (no `set -e`), which is what
   # retry-body.sh's explicit exit-code handling needs. The PATH prefix gives the
-  # body its own tools (tee/grep/mktemp/sleep) and is inherited by `$real`;
+  # body its own tools (tail/grep/mktemp/sleep) and is inherited by `$real`;
   # coreutils-full matches the system default so nothing the wrapped tool needs
   # is shadowed by the minimal coreutils.
   mkRetry = { name, real, kind }:
