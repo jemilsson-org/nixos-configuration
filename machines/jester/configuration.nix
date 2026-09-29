@@ -269,8 +269,20 @@ in
   # file did (it kept calling stale paths and left the Nix-built relock fix
   # inert). mkForce: the upstream module sets ExecStart to a plain
   # "hypridle" invocation with no -c flag.
-  systemd.user.services.hypridle.serviceConfig.ExecStart = lib.mkForce
-    "${config.services.hypridle.package}/bin/hypridle -c ${./hypr/hypridle.conf}";
+  # This module override renders as a systemd drop-in
+  # (.../hypridle.service.d/overrides.conf), and drop-ins are ADDITIVE for
+  # ExecStart: a plain mkForce here still leaves the upstream module's
+  # "hypridle" ExecStart= line in place alongside this one, giving the unit
+  # two ExecStart= settings, which systemd refuses to load
+  # ("Service has more than one ExecStart= setting, which is only allowed
+  # for Type=oneshot services. Refusing."). The systemd idiom for replacing
+  # ExecStart from a drop-in is a list with an empty string FIRST: the empty
+  # entry clears the inherited value, and the following entry becomes the
+  # unit's sole ExecStart=.
+  systemd.user.services.hypridle.serviceConfig.ExecStart = lib.mkForce [
+    ""
+    "${config.services.hypridle.package}/bin/hypridle -c ${./hypr/hypridle.conf}"
+  ];
   # Protect the Claude Code agent session (runs under teleclaude.service in
   # app.slice at oom_score~800 with ManagedOOMPreference=none, i.e. a default
   # oomd candidate). Mark it avoid-last so oomd sacrifices builds/chromium/the
