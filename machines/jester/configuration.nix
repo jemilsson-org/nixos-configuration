@@ -1130,12 +1130,11 @@ in
       ServerAliveInterval 15
       ServerAliveCountMax 2
       ConnectTimeout 30
-      # Multiplex nix-daemon's per-derivation ssh-ng connections over one
-      # master so cold-start/handshake cost is paid once, not per build.
-      # /run: root-owned tmpfs, cleared on reboot (fine for a control socket).
-      ControlMaster auto
-      ControlPath /run/closure-build-cm-%r@%h:%p
-      ControlPersist 10m
+      # ControlMaster disabled: ~50 concurrent nix build-remote sessions
+      # multiplexed over 1-2 TCP connections head-of-line block each other
+      # on a lossy path (2,310 retransmits, 34.8k out-of-order packets,
+      # cwnd 4); builds stalled for 10+ min to hours.
+      ControlMaster no
   '';
 
   # Prevent nix-daemon crash on boot: Settings static initializer dereferences
@@ -1367,7 +1366,7 @@ in
       # across many derivations, so total provisions ≈ maxJobs, not the derivation
       # count. Must stay <= GATEWAY_MAX_CONCURRENT on closure-build-gateway (64),
       # or excess connections queue for slots.
-      maxJobs = 64; # up to 64 parallel ephemeral builders (1 VM per job, scale-to-zero)
+      maxJobs = 32; # up to 32 parallel ephemeral builders (1 VM per job, scale-to-zero)
       speedFactor = 10; # highest priority: prefer closure.build over nixbuild(1)
       # kvm intentionally absent: the Fly builder VM does not expose /dev/kvm;
       # advertising it caused routing failures for kvm-requiring derivations.
