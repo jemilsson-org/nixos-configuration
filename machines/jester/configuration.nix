@@ -163,6 +163,28 @@ in
     MaxRetentionSec=2week
   '';
 
+  # Disk-full guard (2026-09-30): jester booted with root at 636G/830G used,
+  # 77%, after a slow fill outran base.nix's daily GC/optimise schedule and
+  # 1 GiB min-free floor. Raise the reactive GC trigger well above the point
+  # a single build burst can outrun before the next scheduled run, run GC
+  # weekly (base.nix's 30d retention was too loose for jester's build
+  # volume), and optimise the store on every build instead of once a day so
+  # dedup keeps pace between GC runs. configurationLimit widened from
+  # base.nix's 3 to 10: /boot has 963M free of 1022M (6% used), so more
+  # generations cost nothing and give more rollback headroom.
+  boot.loader.systemd-boot.configurationLimit = lib.mkForce 10;
+
+  nix.settings = {
+    min-free = lib.mkForce 5368709120;    # 5 GiB
+    max-free = lib.mkForce 21474836480;   # 20 GiB
+    auto-optimise-store = true;
+  };
+
+  nix.gc = {
+    options = lib.mkForce "--delete-older-than 14d";
+    dates = lib.mkForce "weekly";
+  };
+
   # Memory-pressure hardening.
   #
   # jester has 31 GiB RAM and previously ran with ZERO swap. Under load
