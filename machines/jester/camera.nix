@@ -106,6 +106,27 @@ in
     LIBCAMERA_IPA_CONFIG_PATH = "${libcamera-patched}/share/libcamera/ipa";
   };
 
+  # Hide the V4L2 nodes that are not real cameras from PipeWire (and so from
+  # Chromium's WebRtcPipeWireCamera). The v4l2loopback nodes used by
+  # presence-lock/room-watch advertise wildcard formats (2x1..8192x8192,
+  # framerate min 1/4294967295); Chromium's VideoCaptureModulePipeWire::
+  # OnStreamParamChanged divides by that and dies with SIGFPE (Chromium 151
+  # video_capture utility process, coredump 2026-10-01 13:47), killing every
+  # camera in Teams. The 32 raw ipu6 "isys" nodes are unusable without
+  # libcamera and only add enumeration noise. The real camera stays exposed
+  # through the libcamera monitor ("Built-in Front Camera").
+  services.pipewire.wireplumber.extraConfig."52-hide-fake-v4l2" = {
+    "monitor.v4l2.rules" = [
+      {
+        matches = [
+          { "api.v4l2.cap.driver" = "v4l2 loopback"; }
+          { "api.v4l2.cap.driver" = "isys"; }
+        ];
+        actions."update-props"."device.disabled" = true;
+      }
+    ];
+  };
+
   # Thunderbolt: prevent runtime-suspend which drops DP tunnels
   services.udev.extraRules = ''
     ACTION=="add", SUBSYSTEM=="thunderbolt", ATTR{power/control}="on"
