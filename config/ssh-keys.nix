@@ -10,8 +10,6 @@
 
     "sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhLXNoYTItbmlzdHAyNTZAb3BlbnNzaC5jb20AAAAIbmlzdHAyNTYAAABBBA5OvcNnTolp+OOi5tMFr2sDNRPNkEsAABpoTuuDlU8NhKkaC72fR/SbDIQmk28aRh6nTjLNZLjte56Ulr/zGf0AAAAEc3NoOg== jonas@s3c49"
 
-    "sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhLXNoYTItbmlzdHAyNTZAb3BlbnNzaC5jb20AAAAIbmlzdHAyNTYAAABBBNX97/IVqbpnkMAnCPwP0GFKv4MWzbJu9TtjC9m3lCW4GEk28ZoOUOT0tXu90oA1gsJNkT3wKWZXzpGB3LyLjhUAAAAEc3NoOg== fafnir-tpm@jester [sk]"
-
     "sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhLXNoYTItbmlzdHAyNTZAb3BlbnNzaC5jb20AAAAIbmlzdHAyNTYAAABBBM4+JYILBRHNwiu7AIMwWjVv/raJbpVJnw6F9VpSnr1GpBWK7eHrG+cS08kvA5KwF/CFzVOhnKs7fFU+eh4o+rMAAAAEc3NoOg== fafnir-tpm@jester [sk]"
 
     "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBM4+JYILBRHNwiu7AIMwWjVv/raJbpVJnw6F9VpSnr1GpBWK7eHrG+cS08kvA5KwF/CFzVOhnKs7fFU+eh4o+rM= fafnir-tpm@jester"
