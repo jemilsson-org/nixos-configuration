@@ -12,10 +12,5 @@
 
     "sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhLXNoYTItbmlzdHAyNTZAb3BlbnNzaC5jb20AAAAIbmlzdHAyNTYAAABBBM4+JYILBRHNwiu7AIMwWjVv/raJbpVJnw6F9VpSnr1GpBWK7eHrG+cS08kvA5KwF/CFzVOhnKs7fFU+eh4o+rMAAAAEc3NoOg== fafnir-tpm@jester [sk]"
 
-    "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBM4+JYILBRHNwiu7AIMwWjVv/raJbpVJnw6F9VpSnr1GpBWK7eHrG+cS08kvA5KwF/CFzVOhnKs7fFU+eh4o+rM= fafnir-tpm@jester"
-
-    "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDF+TEOnxkxxupxYmwF1/zheIeFE89nsJ8C60Vqux9dzeKUB0L8foeS4SHg1RWTTnb2P2bXlmz4m0ACz5X4Tm8ApX4LnHy8m+DBNSwG7d5jqKhCCMNGFbmZVkyUexn3E6FJTkbhgjH7kZM3Bp1FcIYMOleFr1NUqtDb5QP6xAKEmqbBgKaVxnxN1EnkmNQcQouWNFgf5u+t49Y3JvMF6emUGCzjpBFtOUCxG6rSN4BYLLZNlu51cnXbSkB5Tg7R9C27Des6Eybs0eVl49jkAd/MAgEvjAq0gQj/XlRLljD+RCorg/YYyYzNyQKkeeg5KRq0/qOGA+C6B57Jnv9Hkx1f fafnir-tpm@jester [rsa]"
-
-    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILrr1FJg/bOUJpJeUlnZSskD4Q38yL7770ah6xxYYkSR fafnir-tpm@jester [ed25519]"
   ];
 }
