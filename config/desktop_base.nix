@@ -265,7 +265,12 @@ in
     #unstable-small.tor-browser-bundle-bin
 
     #Media
-    spotify
+    (pkgs.symlinkJoin {  # GPU sandbox fails on kernel 7.1 (zygote ping lost, GPU process unusable)
+      name = "spotify";
+      paths = [ pkgs.spotify ];
+      nativeBuildInputs = [ pkgs.makeWrapper ];
+      postBuild = "wrapProgram $out/bin/spotify --add-flags --disable-gpu-sandbox";
+    })
     vlc
     mplayer
     smplayer
