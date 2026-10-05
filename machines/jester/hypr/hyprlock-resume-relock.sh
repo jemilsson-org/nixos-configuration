@@ -50,6 +50,14 @@ log_err() {
 # existing (broken-auth) lock client in place than to gamble on a compositor
 # that will not take the replacement back. Prefer jq if present; fall back to
 # grep/sed rather than pull in a new dependency.
+#
+# hyprctl getoption -j renders a boolean option as {"bool": true/false}, with
+# no "int" or "str" key at all (confirmed live on this machine: both options
+# checked here come back as {"option": "...", "bool": true, "set": true} /
+# {"option": "...", "int": 0, "set": true}). Checking only .int/.str made
+# check_option always fail on allow_session_lock_restore, so the script
+# always refused to run, even when the option was correctly set to true. Both
+# the jq and non-jq paths below must also handle "bool".
 check_option() {
     opt="$1"
     want="$2"
@@ -65,15 +73,22 @@ check_option() {
     done
     [ -n "$json" ] || return 1
     if [ -x /run/current-system/sw/bin/jq ]; then
-        val="$(echo "$json" | /run/current-system/sw/bin/jq -r '.int // .str // empty' 2>/dev/null)" || return 1
+        val="$(echo "$json" | /run/current-system/sw/bin/jq -r '.int // .str // .bool // empty' 2>/dev/null)" || return 1
     else
         val="$(echo "$json" | /run/current-system/sw/bin/grep -o '"int"[[:space:]]*:[[:space:]]*[-0-9]*' | /run/current-system/sw/bin/sed -E 's/.*:[[:space:]]*//')"
+        if [ -z "$val" ]; then
+            val="$(echo "$json" | /run/current-system/sw/bin/grep -o -E '"bool"[[:space:]]*:[[:space:]]*(true|false)' | /run/current-system/sw/bin/sed -E 's/.*:[[:space:]]*//')"
+        fi
     fi
     [ -n "$val" ] || return 1
     [ "$val" = "$want" ]
 }
 
-if ! check_option misc:allow_session_lock_restore 1; then
+# allow_session_lock_restore is a boolean option: hyprctl -j renders it as
+# "true"/"false", not "1"/"0", so the wanted value here must be the literal
+# string "true". lockdead_screen_delay is numeric (int), so "0" is correct
+# as-is. Do not go back to "1" for the former: that was the bug.
+if ! check_option misc:allow_session_lock_restore true; then
     log_err "resume-relock: misc:allow_session_lock_restore is not verifiably true; refusing to kill hyprlock (compositor would not restore the lock)"
     exit 1
 fi
