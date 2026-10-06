@@ -72,7 +72,13 @@ in
     };
 
 
-    hyprlock.enable = true;
+    hyprlock = {
+      enable = true;
+      # The hyprlock module adds this package to environment.systemPackages
+      # itself, so this is the one place to override it per-host (jester does,
+      # in its own configuration.nix) without a binary collision.
+      package = pkgs.unstable.hyprlock;
+    };
     waybar.enable = true;
 
     system-config-printer.enable = true;
@@ -160,7 +166,8 @@ in
     pkgs.networkmanagerapplet
 
     unstable.hyprland
-    unstable.hyprlock
+    # hyprlock itself comes from programs.hyprlock.package above, which the
+    # hyprlock module already adds here; listing it again would collide.
     brightnessctl
 
     mako

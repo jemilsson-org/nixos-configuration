@@ -1,4 +1,4 @@
-{ config, lib, pkgs, stdenv, hyprland, nix-build-router, ... }:
+{ config, lib, pkgs, stdenv, hyprland, hyprlock, nix-build-router, ... }:
 let
   #containers = import ./containers/containers.nix { pkgs = pkgs; config = config; stdenv = stdenv; };
   #cardano-node = removed - no longer needed
@@ -1347,11 +1347,25 @@ in
 
   # Run the compositor (and matching xdg portal) from the upstream Hyprland
   # flake instead of nixpkgs-unstable. mkForce overrides the package set in the
-  # shared config/i3_x11.nix module. hyprctl/hyprlock stay on nixpkgs-unstable
-  # (only `hyprctl dispatch dpms on` is used; IPC skew is negligible) to avoid a
+  # shared config/i3_x11.nix module. hyprctl stays on nixpkgs-unstable (only
+  # `hyprctl dispatch dpms on` is used; IPC skew is negligible) to avoid a
   # hyprctl binary collision in environment.systemPackages.
   programs.hyprland.package = lib.mkForce hyprland.packages.${pkgs.system}.hyprland;
   programs.hyprland.portalPackage = lib.mkForce hyprland.packages.${pkgs.system}.xdg-desktop-portal-hyprland;
+
+  # hyprlock 0.9.6 (nixpkgs-unstable, latest tagged release) deadlocks on
+  # unlock under Hyprland 0.56: the main thread hangs forever in
+  # std::thread::join() inside CPam::terminate() waiting for the PAM thread,
+  # which is itself stuck retrying pam_authenticate() after termination is
+  # requested (hyprwm/hyprlock#1055). Only SIGUSR1's fadeOutAndUnlock() path
+  # sets the flag the PAM thread actually checks, which is why SIGUSR1 "wakes"
+  # a hung hyprlock but plain unlock (password or fingerprint) never returns.
+  # Fixed by hyprwm/hyprlock#1059 (commit 1f337a471, 2026-08-07), not yet in a
+  # tagged release, so pin to the upstream flake (tracking master) instead.
+  # mkForce overrides config/i3_x11.nix's programs.hyprlock.package; that
+  # module adds this same package to environment.systemPackages, so this is
+  # the only place the override needs to happen.
+  programs.hyprlock.package = lib.mkForce hyprlock.packages.${pkgs.system}.hyprlock;
   nix.buildMachines = [
     # nixbuild.net remote builder temporarily disabled; closure.build below is
     # the active remote builder.
