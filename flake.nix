@@ -165,5 +165,26 @@
       checks.x86_64-linux.webcam-calibrate-test =
         pkgs.callPackage ./machines/jester/webcam-calibrate-test.nix { };
 
+      # Hermetic tests for the hyprlock fingerprint workarounds: check_option()'s
+      # JSON parsing and verifymatch_watch()'s unlock-hang state machine. No
+      # real Hyprland/hyprlock/fprintd, fakes hyprctl/kill/grep/pgrep.
+      # Run: nix build .#checks.x86_64-linux.hyprlock-resume-relock-test
+      checks.x86_64-linux.hyprlock-resume-relock-test =
+        pkgs.runCommand "hyprlock-resume-relock-test"
+          { nativeBuildInputs = [ pkgs.bash pkgs.gnused pkgs.gnugrep pkgs.coreutils pkgs.jq pkgs.shellcheck ]; } ''
+          cp ${./machines/jester/hypr/hyprlock-wrapper.sh} hyprlock-wrapper.sh
+          cp ${./machines/jester/hypr/hyprlock-resume-relock.sh} hyprlock-resume-relock.sh
+          cp ${./machines/jester/hypr/hyprlock-resume-relock.test.sh} hyprlock-resume-relock.test.sh
+          cp ${./machines/jester/hypr/hyprlock-wrapper.test.sh} hyprlock-wrapper.test.sh
+          bash -n hyprlock-wrapper.sh
+          bash -n hyprlock-resume-relock.sh
+          shellcheck -s bash -x hyprlock-wrapper.sh
+          shellcheck -s bash -x hyprlock-resume-relock.test.sh
+          shellcheck -s bash -x hyprlock-wrapper.test.sh
+          bash hyprlock-resume-relock.test.sh
+          bash hyprlock-wrapper.test.sh
+          touch $out
+        '';
+
     };
 }
