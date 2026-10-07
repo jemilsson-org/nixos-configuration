@@ -63,7 +63,7 @@
 
   # Present Howdy to the auth flows you actually use. The howdy module wires the
   # PAM stack when enabled; this just makes the intent explicit and covers sudo,
-  # login, and the Hyprland lock (hyprlock uses its own PAM service "hyprlock").
+  # login, and the Hyprland lock (swaylock uses its own PAM service "swaylock").
   security.pam.services = lib.mkIf config.services.howdy.enable {
     sudo.rules.auth.howdy.order = lib.mkDefault 11400;
     login.rules.auth.howdy.order = lib.mkDefault 11400;

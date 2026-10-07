@@ -1,8 +1,8 @@
 { config, lib, pkgs, ... }:
 
 # Presence-based auto-lock: locks the Hyprland session when the RGB webcam
-# sees no face for --timeout seconds. Unlock stays on the existing hyprlock
-# setup (config/i3_x11.nix) - out of scope here.
+# sees no face for --timeout seconds. Unlock stays on the existing swaylock
+# setup (machines/jester/configuration.nix) - out of scope here.
 #
 # Camera access: the IPU6/OV2740 only enumerates via libcamera/PipeWire (see
 # camera.nix), so a plain V4L2 client (cv2.VideoCapture) can't read it

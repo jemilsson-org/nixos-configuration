@@ -1,4 +1,4 @@
-{ config, lib, pkgs, stdenv, hyprland, hyprlock, nix-build-router, ... }:
+{ config, lib, pkgs, stdenv, hyprland, nix-build-router, ... }:
 let
   #containers = import ./containers/containers.nix { pkgs = pkgs; config = config; stdenv = stdenv; };
   #cardano-node = removed - no longer needed
@@ -191,7 +191,7 @@ in
   # (rustc/nix builds + the local AI-gateway services + chromium/electron)
   # the *kernel* global OOM killer fired (89 oom-kill invocations in the
   # journal, 80 in a single day) and culled the graphical session wholesale
-  # (pipewire, dbus-broker, the xdg portals), which is what made hyprlock
+  # (pipewire, dbus-broker, the xdg portals), which is what made the locker
   # "sometimes crash" - it dies as collateral when the stack it renders on is
   # wiped. systemd.oomd (enabled in base.nix) acts on cgroup PSI but the
   # kernel global OOM, with no swap to provide reclaim runway, fired first.
@@ -287,7 +287,7 @@ in
   systemd.user.services.fafnir-openpgp.serviceConfig.ManagedOOMPreference = "avoid";
   # Point hypridle at the Nix-managed config instead of the default
   # ~/.config/hypr/hypridle.conf. A store path can't drift out of sync with
-  # the lock_cmd/after_sleep_cmd scripts it points at the way the hand-edited
+  # the lock_cmd it points at the way the hand-edited
   # file did (it kept calling stale paths and left the Nix-built relock fix
   # inert). mkForce: the upstream module sets ExecStart to a plain
   # "hypridle" invocation with no -c flag.
@@ -811,6 +811,7 @@ in
   '';
 
   environment.systemPackages = with pkgs; [
+    swaylock
     # FreeBuds control (ANC, battery, gestures, quality preference) over
     # SPP. Two fixes pending upstream: the wrapper misses the `packaging`
     # dep (openfreebuds#93-style packaging bug), and FreeBuds 6 is not in
@@ -844,17 +845,6 @@ in
       (builtins.readFile ./hypr/monitor-setup.py))
     (pkgs.writeShellScriptBin "hypr-monitor-events"
       (builtins.readFile ./hypr/handle-monitor-events.sh))
-    # hyprlock single-instance wrapper (flock guard + per-session log capture).
-    # See the script for why: diagnosing a post-resume fingerprint/auth
-    # lockout needed per-session logs, since hyprlock's stdout is otherwise an
-    # inherited socket.
-    (pkgs.writeShellScriptBin "hyprlock-wrapper"
-      (builtins.readFile ./hypr/hyprlock-wrapper.sh))
-    # Workaround for the same lockout: hypridle's after_sleep_cmd calls this to
-    # replace hyprlock on resume, because hyprlock never re-arms the
-    # fingerprint reader after suspend. See the script for the full mechanism.
-    (pkgs.writeShellScriptBin "hyprlock-resume-relock"
-      (builtins.readFile ./hypr/hyprlock-resume-relock.sh))
     # `libinput debug-events` CLI, for diagnosing post-resume input state:
     # whether key-release events go missing across a suspend/resume cycle
     # (a candidate cause of the post-resume password auth failures).
@@ -977,20 +967,20 @@ in
 
 
 
-  # hyprlock's own fingerprint auth (auth:fingerprint in hyprlock.conf) talks
-  # to fprintd directly. pam_fprintd in the same PAM stack claimed the same
-  # sensor at the same time, so fprintd denied one side with "already
-  # claimed"; that denial used to trigger the stale-claim reaper to restart
-  # fprintd mid-verify, and hyprlock then hung after unlock (2026-09-11).
-  # Disabling pam_fprintd here leaves hyprlock's native path as the only
-  # claimant. Nothing restarts fprintd automatically now: hyprlock claims the
-  # sensor once and never reconnects to a restarted fprintd, so a restart
-  # would break the next lock; the polkit rule below stays as a manual escape
-  # hatch.
-  security.pam.services.hyprlock.fprintAuth = false;
+  # swaylock replaces hyprlock on jester: hyprlock (0.9.6 and upstream
+  # master) hung in a futex on unlock and locked the user out. swaylock does
+  # all auth through PAM. pam_unix runs before pam_fprintd here so a typed
+  # password unlocks at once; Enter on an empty field fails pam_unix and
+  # falls through to pam_fprintd, which waits for a finger.
+  security.pam.services.swaylock = {
+    fprintAuth = true;
+    rules.auth.fprintd.order = config.security.pam.services.swaylock.rules.auth.unix.order + 10;
+  };
+  # config/i3_x11.nix enables hyprlock for every Hyprland host; jester opts out.
+  programs.hyprlock.enable = lib.mkForce false;
 
   # Allow jonas to restart fprintd without a password (needed to clear stale
-  # D-Bus claims after hyprlock exits without releasing the sensor).
+  # D-Bus claims after a locker exits without releasing the sensor).
   security.polkit.extraConfig = ''
     polkit.addRule(function(action, subject) {
       if (action.id == "org.freedesktop.systemd1.manage-units" &&
@@ -1353,19 +1343,6 @@ in
   programs.hyprland.package = lib.mkForce hyprland.packages.${pkgs.system}.hyprland;
   programs.hyprland.portalPackage = lib.mkForce hyprland.packages.${pkgs.system}.xdg-desktop-portal-hyprland;
 
-  # hyprlock 0.9.6 (nixpkgs-unstable, latest tagged release) deadlocks on
-  # unlock under Hyprland 0.56: the main thread hangs forever in
-  # std::thread::join() inside CPam::terminate() waiting for the PAM thread,
-  # which is itself stuck retrying pam_authenticate() after termination is
-  # requested (hyprwm/hyprlock#1055). Only SIGUSR1's fadeOutAndUnlock() path
-  # sets the flag the PAM thread actually checks, which is why SIGUSR1 "wakes"
-  # a hung hyprlock but plain unlock (password or fingerprint) never returns.
-  # Fixed by hyprwm/hyprlock#1059 (commit 1f337a471, 2026-08-07), not yet in a
-  # tagged release, so pin to the upstream flake (tracking master) instead.
-  # mkForce overrides config/i3_x11.nix's programs.hyprlock.package; that
-  # module adds this same package to environment.systemPackages, so this is
-  # the only place the override needs to happen.
-  programs.hyprlock.package = lib.mkForce hyprlock.packages.${pkgs.system}.hyprlock;
   nix.buildMachines = [
     # nixbuild.net remote builder temporarily disabled; closure.build below is
     # the active remote builder.

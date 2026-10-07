@@ -33,18 +33,6 @@
     hyprland = {
       url = "github:hyprwm/Hyprland";
     };
-    # Upstream hyprlock (jester only), tracking master: 0.9.6 (the latest
-    # tagged release) deadlocks on unlock under Hyprland 0.56 (main thread
-    # stuck in CPam::terminate()'s std::thread::join(), see
-    # hyprwm/hyprlock#1055); the fix (hyprwm/hyprlock#1059, commit 1f337a471)
-    # is unreleased. Follows nixpkgs, unlike the Hyprland input above: hyprlock
-    # has no binary cache, so there is no cachix benefit to pinning it
-    # separately, and following keeps its build inputs consistent with the
-    # rest of the system.
-    hyprlock = {
-      url = "github:hyprwm/hyprlock";
-      inputs.nixpkgs.follows = "nixpkgs-unstable";
-    };
     nix-build-router = {
       url = "git+ssh://git@github.com/jemilsson-org/closure-build";
       inputs.nixpkgs.follows = "nixpkgs-unstable";
@@ -71,7 +59,7 @@
     */
   };
 
-  outputs = { self, nixpkgs, nixpkgs-unstable, nixpkgs-jemilsson, fafnir, syna, claude-code, hyprland, hyprlock, nix-build-router, nixos-wsl }: # , agenix, agenix-rekey }: # bambu-studio,
+  outputs = { self, nixpkgs, nixpkgs-unstable, nixpkgs-jemilsson, fafnir, syna, claude-code, hyprland, nix-build-router, nixos-wsl }: # , agenix, agenix-rekey }: # bambu-studio,
     let
       system = "x86_64-linux";
       overlay-unstable = final: prev: {
@@ -128,7 +116,7 @@
         };
 
         jester = nixpkgs.lib.nixosSystem {
-          specialArgs = { inherit hyprland hyprlock nix-build-router; };
+          specialArgs = { inherit hyprland nix-build-router; };
           modules = [
             ({ config, pkgs, ... }: { nixpkgs.hostPlatform = system; nixpkgs.overlays = [ overlay-unstable overlay-jemilsson ]; })
             fafnir.nixosModules.default
@@ -176,27 +164,6 @@
       # frame, no camera/network). Run: nix build .#checks.x86_64-linux.webcam-calibrate-test
       checks.x86_64-linux.webcam-calibrate-test =
         pkgs.callPackage ./machines/jester/webcam-calibrate-test.nix { };
-
-      # Hermetic tests for the hyprlock fingerprint workarounds: check_option()'s
-      # JSON parsing and verifymatch_watch()'s unlock-hang state machine. No
-      # real Hyprland/hyprlock/fprintd, fakes hyprctl/kill/grep/pgrep.
-      # Run: nix build .#checks.x86_64-linux.hyprlock-resume-relock-test
-      checks.x86_64-linux.hyprlock-resume-relock-test =
-        pkgs.runCommand "hyprlock-resume-relock-test"
-          { nativeBuildInputs = [ pkgs.bash pkgs.gnused pkgs.gnugrep pkgs.coreutils pkgs.jq pkgs.shellcheck ]; } ''
-          cp ${./machines/jester/hypr/hyprlock-wrapper.sh} hyprlock-wrapper.sh
-          cp ${./machines/jester/hypr/hyprlock-resume-relock.sh} hyprlock-resume-relock.sh
-          cp ${./machines/jester/hypr/hyprlock-resume-relock.test.sh} hyprlock-resume-relock.test.sh
-          cp ${./machines/jester/hypr/hyprlock-wrapper.test.sh} hyprlock-wrapper.test.sh
-          bash -n hyprlock-wrapper.sh
-          bash -n hyprlock-resume-relock.sh
-          shellcheck -s bash -x hyprlock-wrapper.sh
-          shellcheck -s bash -x hyprlock-resume-relock.test.sh
-          shellcheck -s bash -x hyprlock-wrapper.test.sh
-          bash hyprlock-resume-relock.test.sh
-          bash hyprlock-wrapper.test.sh
-          touch $out
-        '';
 
     };
 }
