@@ -316,6 +316,23 @@ in
   # MemoryHigh=20G + OOMScoreAdjust=500 already bias builds as the OOM victim.
   systemd.user.services.teleclaude.serviceConfig.ManagedOOMPreference = "avoid";
 
+  # Keep Claude and the local LLM proxies responsive while terminal jobs crunch.
+  # These units live in ~/.config/systemd/user, which shadows any full unit
+  # NixOS writes to /etc/systemd/user, so systemd.user.services.<n> settings
+  # never load (the teleclaude ManagedOOMPreference above is dead for this
+  # reason). Plain drop-ins merge across search paths; overrideStrategy
+  # "asDropin" would also inject NixOS's default PATH and clobber claude-api's.
+  systemd.user.slices.ai.sliceConfig = { CPUWeight = 1000; IOWeight = 1000; };
+  systemd.user.services.bedrock-access-gateway.serviceConfig.Slice = "ai.slice";
+  # Plain drop-ins via systemd.packages; /etc/systemd/user is one store
+  # symlink, so environment.etc cannot add files under it.
+  systemd.packages =
+    map (n: pkgs.writeTextDir "lib/systemd/user/${n}.service.d/ai-slice.conf"
+      "[Service]\nSlice=ai.slice\n")
+      [ "claude-api" "claude-intercept" "venice-api" "teleclaude" "muninn" ]
+    ++ [ (pkgs.writeTextDir "lib/systemd/user/disk-cleanup.service.d/low-priority.conf"
+      "[Service]\nCPUWeight=20\nIOWeight=20\nNice=10\n") ];
+
   # /tmp lives on the root fs and had accumulated 71G/18k entries: a nightly
   # recursive /tmp scan refreshes atime on every entry (all sampled nix-shell
   # dirs shared an identical atime to the nanosecond), and under relatime that
@@ -898,7 +915,24 @@ in
     bun
     sox
 
-    claude-code
+    # claude in ai.slice (see systemd.user.slices.ai); falls back to direct exec.
+    (pkgs.symlinkJoin {
+      name = "claude-code";
+      paths = [ claude-code ];
+      postBuild = ''
+        rm $out/bin/claude
+        cat > $out/bin/claude <<EOF
+        #!${pkgs.runtimeShell}
+        real=${claude-code}/bin/claude
+        if ! ${pkgs.gnugrep}/bin/grep -q /ai.slice/ /proc/self/cgroup 2>/dev/null \\
+          && ${pkgs.systemd}/bin/systemd-run --user --scope --quiet --collect true 2>/dev/null; then
+          exec ${pkgs.systemd}/bin/systemd-run --user --scope --quiet --collect --slice=ai.slice -- "\$real" "\$@"
+        fi
+        exec "\$real" "\$@"
+        EOF
+        chmod +x $out/bin/claude
+      '';
+    })
 
     nix-tcp-proxy
 
