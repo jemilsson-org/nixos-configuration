@@ -860,6 +860,8 @@ in
     # reloads only when the layout changed; events debounces hotplug bursts.
     (pkgs.writers.writePython3Bin "hypr-monitor-setup" { flakeIgnore = [ "E501" "W503" "W504" ]; }
       (builtins.readFile ./hypr/monitor-setup.py))
+    # Read by hypr-monitor-events.
+    socat
     (pkgs.writeShellScriptBin "hypr-monitor-events"
       (builtins.readFile ./hypr/handle-monitor-events.sh))
     # `libinput debug-events` CLI, for diagnosing post-resume input state:

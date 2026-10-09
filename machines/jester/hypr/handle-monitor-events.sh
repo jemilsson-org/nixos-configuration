@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Listen for Hyprland monitor connect/disconnect events and reconfigure.
-# Uses hyprctl's built-in event socket via bash (no socat dependency).
+# socat, not nc: libressl nc busy-loops in user space on this socket
+# and stops reading events.
 
 SOCKET="$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock"
 
@@ -16,7 +17,7 @@ if [ ! -S "$SOCKET" ]; then
 fi
 
 # Read events from the socket
-nc -U "$SOCKET" | while read -r line; do
+socat -u UNIX-CONNECT:"$SOCKET" - | while read -r line; do
     case "$line" in
         monitoradded\>\>*|monitorremoved\>\>*)
             echo "Monitor event: $line"
