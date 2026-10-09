@@ -928,12 +928,13 @@ in
         real=${claude-code}/bin/claude
         # CLDR en-DK formats time as 15.42; en-SE gives ISO dates, 15:42, English names.
         # glibc lacks en_SE, so commands claude runs fall back to C time format.
-        export LC_TIME=en_SE.UTF-8
+        # Set it via env, not export: bash warns when assigning a locale glibc lacks.
+        lc="${pkgs.coreutils}/bin/env LC_TIME=en_SE.UTF-8"
         if ! ${pkgs.gnugrep}/bin/grep -q /ai.slice/ /proc/self/cgroup 2>/dev/null \\
           && ${pkgs.systemd}/bin/systemd-run --user --scope --quiet --collect true 2>/dev/null; then
-          exec ${pkgs.systemd}/bin/systemd-run --user --scope --quiet --collect --slice=ai.slice -- "\$real" "\$@"
+          exec \$lc ${pkgs.systemd}/bin/systemd-run --user --scope --quiet --collect --slice=ai.slice -- "\$real" "\$@"
         fi
-        exec "\$real" "\$@"
+        exec \$lc "\$real" "\$@"
         EOF
         chmod +x $out/bin/claude
       '';
