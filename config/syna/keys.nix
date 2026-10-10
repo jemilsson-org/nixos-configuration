@@ -51,9 +51,17 @@
       key = "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBNtsMO333sa68V9uu5CMms6ShITJNpB2NRyyGzcj+7xVcyDvB28w3dKfjdbTmWUfm7CvjMAPd/h92yEkJW5zBQg= YubiKey Nano 4C PIV Slot 82";
       attestation = ./attestations/yubikey-nano-4c-piv-slot-82.syna;
     }
+    # Stale: fafnir was re-provisioned and no longer advertises this key; kept for reference.
     {
       key = "sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhLXNoYTItbmlzdHAyNTZAb3BlbnNzaC5jb20AAAAIbmlzdHAyNTYAAABBBNX97/IVqbpnkMAnCPwP0GFKv4MWzbJu9TtjC9m3lCW4GEk28ZoOUOT0tXu90oA1gsJNkT3wKWZXzpGB3LyLjhUAAAAEc3NoOg== fafnir-tpm@jester";
       attestation = ./attestations/jester-fafnir.syna;
+    }
+    {
+      key = "sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhLXNoYTItbmlzdHAyNTZAb3BlbnNzaC5jb20AAAAIbmlzdHAyNTYAAABBBM4+JYILBRHNwiu7AIMwWjVv/raJbpVJnw6F9VpSnr1GpBWK7eHrG+cS08kvA5KwF/CFzVOhnKs7fFU+eh4o+rMAAAAEc3NoOg== fafnir-tpm@jester";
+      waiver = {
+        justification = "fafnir re-provisioned; attestation for new key pending";
+        expires = "2026-11-09";
+      };
     }
   ];
 }
