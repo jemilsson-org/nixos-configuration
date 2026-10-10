@@ -330,14 +330,17 @@ in
   # 80% slice default oomctl showed) drops the worst descendant cgroup under
   # sustained pressure. 2026-10-10: ~29 realesrgan workers in ai-jobs held 22G
   # shmem plus heavy swap, and the box thrashed before any kill fired.
+  # oomd pressure kill (40%) lives in per-slice drop-ins, not sliceConfig:
+  # systemd.oomd.enableUserSlices ships slice.d/overrides.conf with
+  # ManagedOOMMemoryPressureLimit=80% on every slice, and the slice.d
+  # directory outranks the slice's unit file, so a unit-file setting never
+  # takes effect. zz- sorts after overrides.conf within the drop-in dir.
   systemd.user.slices.ai.sliceConfig = {
     CPUWeight = 50;
     IOWeight = 50;
     MemoryHigh = "24G";
     MemoryMax = "26G";
     MemorySwapMax = "8G";
-    ManagedOOMMemoryPressure = "kill";
-    ManagedOOMMemoryPressureLimit = "40%";
   };
   systemd.user.slices.ai-jobs.sliceConfig = {
     CPUWeight = 10;
@@ -345,8 +348,6 @@ in
     MemoryHigh = "16G";
     MemoryMax = "18G";
     MemorySwapMax = "4G";
-    ManagedOOMMemoryPressure = "kill";
-    ManagedOOMMemoryPressureLimit = "40%";
   };
   systemd.user.slices.session.sliceConfig = { CPUWeight = 400; MemoryLow = "1G"; };
   systemd.user.slices.app.sliceConfig = { CPUWeight = 200; MemoryLow = "2G"; };
@@ -357,6 +358,9 @@ in
     map (n: pkgs.writeTextDir "lib/systemd/user/${n}.service.d/ai-slice.conf"
       "[Service]\nSlice=ai.slice\n")
       [ "claude-api" "claude-intercept" "venice-api" "teleclaude" "muninn" ]
+    ++ map (n: pkgs.writeTextDir "lib/systemd/user/${n}.slice.d/zz-oomd.conf"
+      "[Slice]\nManagedOOMMemoryPressure=kill\nManagedOOMMemoryPressureLimit=40%\n")
+      [ "ai" "ai-jobs" ]
     ++ [ (pkgs.writeTextDir "lib/systemd/user/disk-cleanup.service.d/low-priority.conf"
       "[Service]\nCPUWeight=20\nIOWeight=20\nNice=10\n") ];
 
