@@ -322,7 +322,34 @@ in
   # never load (the teleclaude ManagedOOMPreference above is dead for this
   # reason). Plain drop-ins merge across search paths; overrideStrategy
   # "asDropin" would also inject NixOS's default PATH and clobber claude-api's.
-  systemd.user.slices.ai.sliceConfig = { CPUWeight = 1000; IOWeight = 1000; };
+  # Desktop first: Hyprland (session.slice) and apps (app.slice) outrank AI work.
+  # Inside ai.slice, claude itself (weight 100) outranks the Bash commands it
+  # runs, which the claude wrapper moves to ai-jobs.slice (a child of ai.slice).
+  # Hard caps kill only inside these slices (kernel cgroup OOM): MemoryHigh
+  # throttles and swaps, MemoryMax kills. oomd pressure kill (40%, below the
+  # 80% slice default oomctl showed) drops the worst descendant cgroup under
+  # sustained pressure. 2026-10-10: ~29 realesrgan workers in ai-jobs held 22G
+  # shmem plus heavy swap, and the box thrashed before any kill fired.
+  systemd.user.slices.ai.sliceConfig = {
+    CPUWeight = 50;
+    IOWeight = 50;
+    MemoryHigh = "24G";
+    MemoryMax = "26G";
+    MemorySwapMax = "8G";
+    ManagedOOMMemoryPressure = "kill";
+    ManagedOOMMemoryPressureLimit = "40%";
+  };
+  systemd.user.slices.ai-jobs.sliceConfig = {
+    CPUWeight = 10;
+    IOWeight = 10;
+    MemoryHigh = "16G";
+    MemoryMax = "18G";
+    MemorySwapMax = "4G";
+    ManagedOOMMemoryPressure = "kill";
+    ManagedOOMMemoryPressureLimit = "40%";
+  };
+  systemd.user.slices.session.sliceConfig = { CPUWeight = 400; MemoryLow = "1G"; };
+  systemd.user.slices.app.sliceConfig = { CPUWeight = 200; MemoryLow = "2G"; };
   systemd.user.services.bedrock-access-gateway.serviceConfig.Slice = "ai.slice";
   # Plain drop-ins via systemd.packages; /etc/systemd/user is one store
   # symlink, so environment.etc cannot add files under it.
@@ -918,7 +945,19 @@ in
     sox
 
     # claude in ai.slice (see systemd.user.slices.ai); falls back to direct exec.
-    (pkgs.symlinkJoin {
+    (let
+      # Claude passes every hook, MCP server and Bash tool command to this
+      # prefix as one string. Only Bash tool commands (they source a zsh shell
+      # snapshot) go to ai-jobs.slice; hooks skip systemd-run's startup cost.
+      claudeJobPrefix = pkgs.writeShellScript "claude-job-prefix" ''
+        case "$1" in
+          *shell-snapshots/snapshot-*)
+            exec ${pkgs.systemd}/bin/systemd-run --user --scope --quiet --collect \
+              --slice=ai-jobs.slice -- "''${SHELL:-/bin/sh}" -c "$1" ;;
+        esac
+        exec /bin/sh -c "$1"
+      '';
+    in pkgs.symlinkJoin {
       name = "claude-code";
       paths = [ claude-code ];
       postBuild = ''
@@ -932,7 +971,7 @@ in
         lc="${pkgs.coreutils}/bin/env LC_TIME=en_SE.UTF-8"
         if ! ${pkgs.gnugrep}/bin/grep -q /ai.slice/ /proc/self/cgroup 2>/dev/null \\
           && ${pkgs.systemd}/bin/systemd-run --user --scope --quiet --collect true 2>/dev/null; then
-          exec \$lc ${pkgs.systemd}/bin/systemd-run --user --scope --quiet --collect --slice=ai.slice -- "\$real" "\$@"
+          exec \$lc CLAUDE_CODE_SHELL_PREFIX=${claudeJobPrefix} ${pkgs.systemd}/bin/systemd-run --user --scope --quiet --collect --slice=ai.slice -- "\$real" "\$@"
         fi
         exec \$lc "\$real" "\$@"
         EOF
