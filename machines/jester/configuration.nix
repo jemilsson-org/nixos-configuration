@@ -1207,7 +1207,11 @@ in
     #   sudo install -m600 -o root -g root <repo>/closure_build_client /root/.ssh/closure_build_client
     # This must be re-run manually after a fresh checkout; it is NOT automated
     # via an activation script because the source path is outside the NixOS config.
-    Host closure-build
+    # closure-build-1..4: same gateway under distinct names. Nix's build-remote
+    # holds one upload lock per store URI string (build-remote.cc,
+    # "<uri>.upload-lock"), so one alias serialises every input upload; four
+    # aliases allow four concurrent uploads.
+    Host closure-build closure-build-1 closure-build-2 closure-build-3 closure-build-4
       HostName closure-build-gateway.fly.dev
       Port 2222
       User builder
@@ -1445,31 +1449,36 @@ in
     #   supportedFeatures = [ "big-parallel" "benchmark" ];
     #   protocol = "ssh-ng";
     # }
-    {
-      # closure.build remote builder via Fly.io gateway (ssh-ng over port 2222).
-      # "closure-build" resolves via the Host alias in programs.ssh.extraConfig above.
-      # The gateway provisions on-demand Fly performance-4x machines (x86_64-linux).
-      # highest priority: prefer closure.build over nixbuild(1) when both are configured.
-      # Trade-off: closure.build provisions a fresh VM per build (~9-17s cold start);
-      # top priority means every eligible build pays that cold-start latency —
-      # this is the user's explicit choice.
-      hostName = "closure-build";
-      sshUser = "builder";
-      sshKey = "/root/.ssh/closure_build_client";
-      systems = [ "x86_64-linux" ];
-      # maxJobs = parallel nix-daemon connections jester opens to the gateway, and
-      # EACH connection triggers one gateway provision. nix reuses each connection
-      # across many derivations, so total provisions ≈ maxJobs, not the derivation
-      # count. Must stay <= GATEWAY_MAX_CONCURRENT on closure-build-gateway (64),
-      # or excess connections queue for slots.
-      maxJobs = 32; # up to 32 parallel ephemeral builders (1 VM per job, scale-to-zero)
-      speedFactor = 10; # highest priority: prefer closure.build over nixbuild(1)
-      # kvm intentionally absent: the Fly builder VM does not expose /dev/kvm;
-      # advertising it caused routing failures for kvm-requiring derivations.
-      supportedFeatures = [ "nixos-test" "benchmark" "big-parallel" ];
-      protocol = "ssh-ng";
-    }
-  ];
+  ]
+  # Four entries, one per SSH alias, so uploads run four at a time instead of
+  # queueing on one per-URI upload lock. No ?compress=true: measured slower
+  # (566 MB NAR: 74 s raw vs 129 s with ssh -C on this CPU-loaded host).
+  ++ map (n:
+      {
+        # closure.build remote builder via Fly.io gateway (ssh-ng over port 2222).
+        # "closure-build" resolves via the Host alias in programs.ssh.extraConfig above.
+        # The gateway provisions on-demand Fly performance-4x machines (x86_64-linux).
+        # highest priority: prefer closure.build over nixbuild(1) when both are configured.
+        # Trade-off: closure.build provisions a fresh VM per build (~9-17s cold start);
+        # top priority means every eligible build pays that cold-start latency —
+        # this is the user's explicit choice.
+        hostName = "closure-build-${toString n}";
+        sshUser = "builder";
+        sshKey = "/root/.ssh/closure_build_client";
+        systems = [ "x86_64-linux" ];
+        # maxJobs = parallel nix-daemon connections jester opens to the gateway, and
+        # EACH connection triggers one gateway provision. nix reuses each connection
+        # across many derivations, so total provisions ≈ maxJobs, not the derivation
+        # count. Must stay <= GATEWAY_MAX_CONCURRENT on closure-build-gateway (64),
+        # or excess connections queue for slots.
+        maxJobs = 8; # x4 aliases = 32 parallel ephemeral builders (1 VM per job, scale-to-zero)
+        speedFactor = 10; # highest priority: prefer closure.build over nixbuild(1)
+        # kvm intentionally absent: the Fly builder VM does not expose /dev/kvm;
+        # advertising it caused routing failures for kvm-requiring derivations.
+        supportedFeatures = [ "nixos-test" "benchmark" "big-parallel" ];
+        protocol = "ssh-ng";
+      }
+    ) [ 1 2 3 4 ];
   programs.ssh.knownHosts."closure-build-gateway" = {
     # Host key for closure-build-gateway.fly.dev:2222 (closure.build Fly.io gateway).
     # Obtained via: ssh-keyscan -p 2222 closure-build-gateway.fly.dev
