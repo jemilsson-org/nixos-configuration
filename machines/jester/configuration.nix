@@ -18,6 +18,8 @@ let
     { prefix = "160.79.104.0/23"; }  # Claude code
     { prefix = "137.61.9.13/32"; }   # skatteverket.se
     { prefix = "137.61.9.10/32"; }   # www7.skatteverket.se
+    { prefix = "172.64.150.27/32"; } # stake.com (Cloudflare; local DNS is blocked, resolve via DoH)
+    { prefix = "104.18.37.229/32"; } # stake.com
   ];
 
   wg2IPv6Prefixes = [
