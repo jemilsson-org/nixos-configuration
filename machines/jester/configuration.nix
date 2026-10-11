@@ -515,7 +515,10 @@ in
   };
 
   hardware.bluetooth.settings.General.Experimental = true;
-  hardware.bluetooth.settings.General.KernelExperimental = true;
+  # ISO sockets only. "true" also enables the kernel codec-offload
+  # feature (a6695ace-...), which on the AX211 corrupts every SCO packet
+  # ("Bluetooth: hci0: corrupted SCO packet") and kills the HFP mic.
+  hardware.bluetooth.settings.General.KernelExperimental = "6fbaf188-05e0-496a-9885-d6ddfdb4e03e";
   # bluez 5.87: adds Device1.PreferredBearer (experimental), needed to
   # force the LE bearer on dual-mode devices like the FreeBuds 6 -
   # without it every connection lands on BR/EDR and BAP/LC3 is
