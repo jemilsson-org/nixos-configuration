@@ -1,20 +1,24 @@
 #!/usr/bin/env python3
-"""Presence-based auto-lock daemon.
+"""Presence-based auto-lock: one-shot check, run on-demand by a hypridle
+listener (see hypr/hypridle.conf), not a long-running daemon.
 
-Samples the built-in RGB camera (fed into a v4l2loopback device by
-presence-lock-feed.service, see presence-lock.nix) every --interval seconds,
-runs face detection, and calls `loginctl lock-session` after --timeout
-seconds with no face seen. Never locks while a face is present, never hard-
-fails on a busy/missing camera (skips that poll cycle instead), and pauses
-sampling entirely while the session is already locked so it does not
-contend with an active video call or waste CPU/power.
+Touches the webcam only for the few seconds this check needs, then lets it
+go: libcamera is single-consumer, so a permanently-open feed (the old
+presence-lock-feed.service) blocked every other app from the camera. This
+spawns a short gst-launch pipeline that pulls a handful of raw frames
+straight off the shared PipeWire camera node, runs face detection on the
+last few (letting auto-exposure settle), and only then decides whether to
+lock. No frames, an unreadable camera, or a timeout (e.g. a video call
+already holds the camera) all fail open: log and exit without locking. See
+presence-lock.nix for the packaging and why libcamera forces this route
+instead of a plain cv2.VideoCapture.
 """
 import argparse
 import subprocess
 import sys
-import time
 
 import cv2
+import numpy as np
 
 # nixpkgs' opencv4 python bindings don't ship cv2.data (no bundled cascade
 # dir), unlike upstream pip wheels, so the cascade path is passed in
@@ -22,9 +26,9 @@ import cv2
 
 
 def session_locked() -> bool:
-    """True if the current session is already locked (or lock state can't
-    be determined - fail closed on sampling, i.e. skip rather than sample
-    a session we can't confirm is unlocked)."""
+    """True if the session is already locked (or lock state can't be
+    determined - fail closed here too, i.e. skip rather than lock a session
+    we can't confirm is unlocked)."""
     try:
         out = subprocess.run(
             ["loginctl", "show-session", "self", "-p", "LockedHint", "--value"],
@@ -32,38 +36,68 @@ def session_locked() -> bool:
         )
         return out.stdout.strip() != "no"
     except Exception as e:
-        print(f"presence-lock: loginctl check failed, skipping cycle: {e}", file=sys.stderr)
+        print(f"presence-lock: loginctl check failed, skipping: {e}", file=sys.stderr)
         return True
 
 
-def has_face(detector: "cv2.CascadeClassifier", device: str) -> bool | None:
-    """Returns True/False for face presence, or None if the camera could not
-    be read this cycle (busy/unavailable - caller should skip, not lock)."""
-    cap = cv2.VideoCapture(device)
+def grab_frames(gst_launch: str, target_object: str, width: int, height: int,
+                 num_buffers: int, timeout: float) -> list:
+    """Runs a short gst-launch pipeline and returns the raw GRAY8 frames it
+    produced, or [] on any error/timeout (camera busy, missing, etc.)."""
+    frame_size = width * height
+    cmd = [
+        gst_launch, "-q",
+        "pipewiresrc", f"target-object={target_object}", f"num-buffers={num_buffers}",
+        "!", "videoconvert",
+        "!", "videoscale",
+        "!", f"video/x-raw,format=GRAY8,width={width},height={height}",
+        "!", "fdsink", "fd=1",
+    ]
     try:
-        if not cap.isOpened():
-            return None
-        ok, frame = cap.read()
-        if not ok or frame is None:
-            return None
-    finally:
-        cap.release()
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        proc = subprocess.run(cmd, capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        print("presence-lock: gst-launch timed out, camera unreadable", file=sys.stderr)
+        return []
+    if proc.returncode != 0:
+        print(
+            f"presence-lock: gst-launch exited {proc.returncode}: "
+            f"{proc.stderr.decode(errors='replace').strip()}",
+            file=sys.stderr,
+        )
+        return []
+    data = proc.stdout
+    frames = [
+        np.frombuffer(data[i:i + frame_size], dtype=np.uint8).reshape(height, width)
+        for i in range(0, len(data) - frame_size + 1, frame_size)
+    ]
+    return frames
+
+
+def any_face(detector: "cv2.CascadeClassifier", frames: list) -> bool:
+    """Runs Haar detection on the last few frames (auto-exposure needs a
+    handful of frames to settle) and returns True if any shows a face."""
     # Params tuned live against real images (a portrait with a face, a
     # camera frame of an empty room): equalizeHist + scaleFactor=1.05,
     # minNeighbors=4, minSize=50 cleanly separated the two (1 face vs. 0);
     # scaleFactor 1.1+ missed the real face, minNeighbors 3 / minSize 40
     # false-positived on the empty room.
-    gray = cv2.equalizeHist(gray)
-    faces = detector.detectMultiScale(gray, scaleFactor=1.05, minNeighbors=4, minSize=(50, 50))
-    return len(faces) > 0
+    for gray in frames[-5:]:
+        gray = cv2.equalizeHist(gray)
+        faces = detector.detectMultiScale(gray, scaleFactor=1.05, minNeighbors=4, minSize=(50, 50))
+        if len(faces) > 0:
+            return True
+    return False
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--device", default="/dev/video42", help="V4L2 loopback device fed by the camera")
-    ap.add_argument("--interval", type=float, default=3.0, help="seconds between polls")
-    ap.add_argument("--timeout", type=float, default=45.0, help="seconds with no face before locking")
+    ap.add_argument("--gst-launch", default="gst-launch-1.0", help="gst-launch-1.0 binary")
+    ap.add_argument("--target-object", default="libcamera_input.__SB_.PC00.LNK1",
+                     help="PipeWire camera node name")
+    ap.add_argument("--width", type=int, default=640)
+    ap.add_argument("--height", type=int, default=360)
+    ap.add_argument("--num-buffers", type=int, default=20, help="frames to capture")
+    ap.add_argument("--timeout", type=float, default=10.0, help="seconds to wait for gst-launch")
     ap.add_argument("--cascade", required=True, help="path to the Haar cascade XML file")
     args = ap.parse_args()
 
@@ -72,36 +106,27 @@ def main() -> int:
         print("presence-lock: failed to load Haar cascade", file=sys.stderr)
         return 1
 
-    last_face_seen = time.monotonic()
+    frames = grab_frames(
+        args.gst_launch, args.target_object, args.width, args.height,
+        args.num_buffers, args.timeout,
+    )
+    if not frames:
+        # Camera unreadable (busy, missing, timed out): fail open, no lock.
+        print("presence-lock: no frames captured, camera unavailable, not locking", file=sys.stderr)
+        return 0
 
-    while True:
-        time.sleep(args.interval)
+    if any_face(detector, frames):
+        return 0
 
-        if session_locked():
-            # Already locked (or state unknown): don't sample, don't
-            # re-lock, don't burn camera/CPU. Reset the timer so we don't
-            # fire an immediate re-lock the instant it's unlocked.
-            last_face_seen = time.monotonic()
-            continue
+    if session_locked():
+        return 0
 
-        present = has_face(detector, args.device)
-        now = time.monotonic()
-        if present is None:
-            print("presence-lock: camera unavailable this cycle, skipping", file=sys.stderr)
-            continue
-        if present:
-            last_face_seen = now
-            continue
-
-        if now - last_face_seen >= args.timeout:
-            print(f"presence-lock: no face for {now - last_face_seen:.0f}s, locking", file=sys.stderr)
-            try:
-                subprocess.run(["loginctl", "lock-session"], timeout=5, check=False)
-            except Exception as e:
-                print(f"presence-lock: lock-session failed: {e}", file=sys.stderr)
-            # Reset so we don't spam lock-session every cycle until the
-            # LockedHint check above takes over on the next poll.
-            last_face_seen = now
+    print("presence-lock: no face seen, locking", file=sys.stderr)
+    try:
+        subprocess.run(["loginctl", "lock-session"], timeout=5, check=False)
+    except Exception as e:
+        print(f"presence-lock: lock-session failed: {e}", file=sys.stderr)
+    return 0
 
 
 if __name__ == "__main__":

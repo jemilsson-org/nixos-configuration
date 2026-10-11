@@ -165,5 +165,10 @@
       checks.x86_64-linux.webcam-calibrate-test =
         pkgs.callPackage ./machines/jester/webcam-calibrate-test.nix { };
 
+      # Hermetic self-test for presence-lock.py (fakes gst-launch/loginctl, no
+      # real camera or session). Run: nix build .#checks.x86_64-linux.presence-lock-test
+      checks.x86_64-linux.presence-lock-test =
+        pkgs.callPackage ./machines/jester/presence-lock-test.nix { };
+
     };
 }

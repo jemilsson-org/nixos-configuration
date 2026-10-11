@@ -5,10 +5,10 @@
 #
 # CONFLICT (must resolve first): Howdy's NixOS module asserts that
 # `v4l2loopback` is NOT in `boot.kernelModules`. jester currently loads it there
-# via room-watch.nix and presence-lock.nix, so importing this file as-is fails
-# the build with:
+# via v4l2loopback.nix (room-watch's video node), so importing this file as-is
+# fails the build with:
 #   "Adding 'v4l2loopback' to boot.kernelModules causes Howdy to no longer work."
-# Resolve by removing "v4l2loopback" from `boot.kernelModules` in room-watch.nix
+# Resolve by removing "v4l2loopback" from `boot.kernelModules` in v4l2loopback.nix
 # (keep it in `boot.extraModulePackages`) and load it on demand instead, e.g. a
 # oneshot `systemd.services.room-watch` ExecStartPre `modprobe v4l2loopback`,
 # or gate room-watch and howdy so they are not both active. Verified: with the

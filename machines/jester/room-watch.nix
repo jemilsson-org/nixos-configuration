@@ -203,8 +203,8 @@ let
 in
 {
   # v4l2loopback kernel-module config (video_nr=42, card_label=room-watch)
-  # lives in ./v4l2loopback.nix, shared with presence-lock.nix: the module is
-  # a single instance and its options can't be split across two stanzas.
+  # lives in ./v4l2loopback.nix. presence-lock.nix no longer shares this
+  # module: it grabs frames straight off PipeWire on demand instead.
 
   systemd.user.services.room-watch-feed = {
     description = "PipeWire camera feed into v4l2loopback for room-watch";
