@@ -29,13 +29,30 @@
 
   users.defaultUserShell = "/run/current-system/sw/bin/zsh";
 
+  # Mergiraf: syntax-aware git merge driver, applied to all files via
+  # /etc/gitattributes. It falls back to git's line merge for unsupported types.
+  # diff3 conflict style is what mergiraf recommends; ~/.gitconfig overrides it.
+  programs.git = {
+    enable = true;
+    attributes = "* merge=mergiraf";
+    config = {
+      merge = {
+        conflictstyle = "diff3";
+        mergiraf = {
+          name = "mergiraf";
+          driver = "${pkgs.mergiraf}/bin/mergiraf merge --git %O %A %B -s %S -x %X -y %Y -p %P -l %L";
+        };
+      };
+    };
+  };
+
   environment = {
     systemPackages = with pkgs; [
       #System tools
       htop
       wget
       curl
-      git
+      mergiraf
 
       file
       usbutils

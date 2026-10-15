@@ -30,8 +30,6 @@
     trusted-users = [ "root" "jonas" ];
   };
 
-  programs.git.enable = true;
-
   environment.systemPackages = with pkgs; [
     jq
     nodejs
