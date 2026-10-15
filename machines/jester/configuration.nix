@@ -896,10 +896,14 @@ in
     # reloads only when the layout changed; events debounces hotplug bursts.
     (pkgs.writers.writePython3Bin "hypr-monitor-setup" { flakeIgnore = [ "E501" "W503" "W504" ]; }
       (builtins.readFile ./hypr/monitor-setup.py))
-    # Read by hypr-monitor-events.
-    socat
-    (pkgs.writeShellScriptBin "hypr-monitor-events"
-      (builtins.readFile ./hypr/handle-monitor-events.sh))
+    # bashOptions = []: keep plain `bash` semantics; the loop must survive a
+    # failing hypr-monitor-setup. socat is pinned here, not taken from PATH.
+    (pkgs.writeShellApplication {
+      name = "hypr-monitor-events";
+      runtimeInputs = [ pkgs.socat ];
+      bashOptions = [ ];
+      text = builtins.readFile ./hypr/handle-monitor-events.sh;
+    })
     # `libinput debug-events` CLI, for diagnosing post-resume input state:
     # whether key-release events go missing across a suspend/resume cycle
     # (a candidate cause of the post-resume password auth failures).
