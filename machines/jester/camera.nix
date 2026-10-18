@@ -45,29 +45,27 @@ in
   # kernel ipu6-isys -> libcamera "simple" pipeline -> wireplumber -> apps.
   boot.extraModulePackages = with config.boot.kernelPackages; [
     ipu6-drivers
-    # IR sensor (ACPI OVTI9234, \_SB_.PC00.LNK0, behind LJCA/IVSC): no
-    # upstream driver exists; local port of mainline ov9734.c. Built via
-    # config.boot.kernelPackages so it targets the PATCHED kernel below.
+    # IR sensor (ACPI OVTI9234, \_SB_.PC00.LNK0): no upstream driver
+    # exists; local port of mainline ov9734.c.
     (callPackage ./ov9234 { })
     # ipu-bridge only links sensors from its static HID table; shadow the
     # in-tree module with one carrying the OVTI9234 entry (updates/ wins
     # in depmod order) instead of patching the kernel, since the remote
     # builder cannot fit kernel rebuilds.
     (callPackage ./ipu-bridge-shadow { })
-    # The in-kernel IVSC stack (vsc-tp/platform-vsc/ivsc-ace/ivsc-csi) is
-    # complete on 7.x but never probes here: no spi_device is created for
-    # \_SB.PC00.SPI1.SPFD (INTC1009) on the LJCA SPI controller, so the VSC
-    # firmware is never loaded and CSI-2 lane ownership is never handed to
-    # the IPU6. This registers that one missing device.
-    (callPackage ./ivsc-stack { })
   ];
-  # Load order at runtime: vsc-spi-bind creates the SPI device, vsc-tp
-  # (mei-vsc-hw) probes it and spawns the intel_vsc platform device, mei_vsc
-  # brings up the MEI link, then the ivsc_ace/ivsc_csi MEI clients appear and
-  # ivsc_csi joins the media graph in front of ov9234. Only vsc-spi-bind needs
-  # forcing; the rest autoload on their bus/ACPI aliases once it succeeds.
-  # Keep the explicit list anyway: this machine has shown no autoload for them.
-  boot.kernelModules = [ "spi_ljca" "vsc_spi_bind" "mei_vsc" "ivsc_ace" "ivsc_csi" ];
+  # NATIVE-PATH HYPOTHESIS TEST (2026-08-21): the CVFS=2 IVSC-over-LJCA
+  # transport route is a proven dead end (ivsc-stack/DIAGNOSIS.md): native
+  # SPI1 is firmware-disabled + SMM-locked, and forcing CVFS=2 only moved
+  # both sensors behind the un-bring-up-able IVSC. A first-principles look
+  # at the media graph shows ov9234 wired DIRECTLY to IPU6 CSI2-0 (no IVSC
+  # entity in the data path), exactly like the working RGB sensor, and the
+  # only real capture failure was an IPU6 CSI2 pad FORMAT mismatch (EPIPE),
+  # not the IVSC. So drop the whole CVFS poke + patched vsc-tp stack and
+  # test the stock CVFS=0 native path: sensors on native i2c/GPIO, ov9234
+  # streamed directly through IPU6 with a media-ctl format fix. The poke
+  # and vsc-tp-patched modules remain in the tree (ivsc-stack/) as the
+  # investigation record but are no longer loaded.
   hardware.firmware = with pkgs; [ ipu6-camera-bins ivsc-firmware ];
 
   environment.systemPackages = with pkgs; [ libcamera ] ++ [ webcamCalibrate ];
