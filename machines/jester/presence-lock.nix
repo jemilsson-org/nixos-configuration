@@ -30,7 +30,9 @@ let
 
   presenceLockScript = pkgs.writeShellApplication {
     name = "presence-lock";
-    runtimeInputs = [ presencePython gst.gstreamer pkgs.systemd ];
+    # fprintd: the script runs fprintd-verify in parallel with the face check
+    # so a finger touch on the reader also prevents the lock.
+    runtimeInputs = [ presencePython gst.gstreamer pkgs.systemd pkgs.fprintd ];
     text = ''
       export GST_PLUGIN_SYSTEM_PATH_1_0="${gstPluginPath}"
       exec python3 ${./presence-lock.py} \
