@@ -187,6 +187,27 @@ in
     dates = lib.mkForce "weekly";
   };
 
+  # Inode guard (2026-10-19): root (f2fs, fixed inode count) hit 100% of
+  # its 10.25M inodes with 88G free, so every write failed with ENOSPC.
+  # min-free above only watches bytes. Every 10 min, collect unreferenced
+  # store paths when inode use passes 90%; system generations are GC roots
+  # and stay.
+  systemd.services.nix-inode-guard = {
+    description = "Nix GC when root inode use exceeds 90%";
+    serviceConfig.Type = "oneshot";
+    path = [ config.nix.package pkgs.coreutils ];
+    script = ''
+      read -r total free < <(stat -f -c '%c %d' /)
+      used=$(( (total - free) * 100 / total ))
+      echo "root inode use: $used%"
+      if [ "$used" -ge 90 ]; then nix-store --gc --max-freed 50G; fi
+    '';
+  };
+  systemd.timers.nix-inode-guard = {
+    wantedBy = [ "timers.target" ];
+    timerConfig = { OnBootSec = "5min"; OnUnitActiveSec = "10min"; };
+  };
+
   # Memory-pressure hardening.
   #
   # jester has 31 GiB RAM and previously ran with ZERO swap. Under load
@@ -551,26 +572,6 @@ in
     };
   };
 
-  # Disambiguate the two RTK USB-C panels (they ship with identical EDID
-  # serials, which confuses wlroots/Hyprland and prevents distinct
-  # per-output position rules). The kernel-assigned DP connector names
-  # are unstable across reboots (we've seen DP-5/DP-6 and DP-7/DP-8),
-  # but the two panels always land on adjacent connectors. Override every
-  # odd DP-N: exactly one of the two panels picks up the modified EDID,
-  # the other keeps its native one, so they end up with distinct serials.
-  hardware.display.outputs."DP-1".edid = "rtk-dp8.bin";
-  hardware.display.outputs."DP-3".edid = "rtk-dp8.bin";
-  hardware.display.outputs."DP-5".edid = "rtk-dp8.bin";
-  hardware.display.outputs."DP-7".edid = "rtk-dp8.bin";
-  hardware.display.outputs."DP-9".edid = "rtk-dp8.bin";
-  hardware.display.outputs."DP-11".edid = "rtk-dp8.bin";
-  hardware.display.edid.packages = [
-    (pkgs.runCommand "rtk-edid" { } ''
-      mkdir -p "$out/lib/firmware/edid"
-      cp ${./edid/rtk-dp8.bin} "$out/lib/firmware/edid/rtk-dp8.bin"
-    '')
-  ];
-
   # The EHOMEWEI X1 Pro dual monitor (RTK scaler, EDID mfr/product bytes
   # 4a 8b 60 25) trains DP alt mode at 2 of 4 lanes even though sink and
   # port support 4, halving MST bandwidth so the second panel falls back
@@ -583,13 +584,34 @@ in
   services.udev.extraRules =
     let
       ehomewei-lanes = pkgs.writeShellScript "ehomewei-lanes" ''
-        export PATH=${lib.makeBinPath [ pkgs.coreutils pkgs.gnugrep ]}
-        rtk=0 other=0
+        export PATH=${lib.makeBinPath [ pkgs.coreutils pkgs.diffutils pkgs.gnugrep ]}
+        # Disambiguate the X1 Pro's two panels: they ship identical EDID
+        # serials, which breaks per-output rules in Hyprland. When both are
+        # connected with identical EDIDs, give the second one a modified EDID
+        # (serial 0x02010100) via debugfs and reprobe. Runtime, not
+        # drm.edid_firmware: a boot-time override binds to connector names,
+        # so any other monitor on that connector got the panel's EDID too.
+        # Overrides are reset on disconnected connectors so they never stick
+        # to a name another monitor reuses.
+        for conn in /sys/class/drm/card*-DP-*; do
+          [ "$(cat "$conn/status")" = disconnected ] || continue
+          for f in /sys/kernel/debug/dri/*/"''${conn#*-}"/edid_override; do
+            [ -e "$f" ] && printf reset > "$f"
+          done
+        done
+        rtk=0 other=0 panels=()
         for edid in /sys/class/drm/card*-DP-*/edid; do
           [ -s "$edid" ] || continue
           id=$(od -A n -t x1 -j 8 -N 4 "$edid" 2>/dev/null | tr -d ' \n')
-          if [ "$id" = "4a8b6025" ]; then rtk=1; else other=1; fi
+          if [ "$id" = "4a8b6025" ]; then rtk=1; panels+=("$edid"); else other=1; fi
         done
+        if [ "''${#panels[@]}" = 2 ] && cmp -s "''${panels[0]}" "''${panels[1]}"; then
+          conn=''${panels[1]%/edid}
+          for f in /sys/kernel/debug/dri/*/"''${conn#*-}"/edid_override; do
+            [ -e "$f" ] && cat ${./edid/rtk-dp8.bin} > "$f"
+          done
+          printf detect > "$conn/status"
+        fi
         # Keep the 4-lane force armed while nothing else is connected, so
         # the X1 Pro's next attach trains 4-lane directly (no retrain
         # cycle, ~1-2 s faster). Restore auto (with retrain) only when a
