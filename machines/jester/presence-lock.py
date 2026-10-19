@@ -5,17 +5,33 @@ listener (see hypr/hypridle.conf), not a long-running daemon.
 Touches the webcam only for the few seconds this check needs, then lets it
 go: libcamera is single-consumer, so a permanently-open feed (the old
 presence-lock-feed.service) blocked every other app from the camera. This
-spawns a short gst-launch pipeline that pulls a handful of raw frames
-straight off the shared PipeWire camera node, runs face detection on the
-last few (letting auto-exposure settle), and only then decides whether to
-lock. No frames, an unreadable camera, or a timeout (e.g. a video call
+spawns a short gst-launch pipeline that streams raw frames straight off
+the shared PipeWire camera node, runs face detection per frame after a
+short auto-exposure settle, and terminates the pipeline as soon as a face
+is found - so only then does it decide whether to lock. No frames, an unreadable camera, or a timeout (e.g. a video call
 already holds the camera) all fail open: log and exit without locking. See
 presence-lock.nix for the packaging and why libcamera forces this route
 instead of a plain cv2.VideoCapture.
+
+While the face check runs, fprintd-verify runs concurrently; a fingerprint
+match also prevents the lock. If fprintd is absent or errors (no finger
+enrolled, no reader, polkit deny), it is ignored and the face result decides.
+
+If the user becomes active while the check runs, hypridle resumes the
+listener and on-resume touches $XDG_RUNTIME_DIR/presence-lock.resumed; the
+script checks that file's mtime before locking and skips the lock if it is
+newer than the check start (the race between the check finishing and the
+user returning to the keyboard).
+
+Each run logs a start line and a summary line (face, frames read,
+fingerprint result, resumed-during-check, decision) to stderr, which
+hypridle's children send to the user journal.
 """
 import argparse
+import os
 import subprocess
 import sys
+import time
 
 import cv2
 import numpy as np
@@ -23,6 +39,10 @@ import numpy as np
 # nixpkgs' opencv4 python bindings don't ship cv2.data (no bundled cascade
 # dir), unlike upstream pip wheels, so the cascade path is passed in
 # explicitly by presence-lock.nix instead of relying on cv2.data.haarcascades.
+
+
+def log(msg: str) -> None:
+    print(f"presence-lock: {msg}", file=sys.stderr)
 
 
 def session_locked() -> bool:
@@ -36,14 +56,23 @@ def session_locked() -> bool:
         )
         return out.stdout.strip() != "no"
     except Exception as e:
-        print(f"presence-lock: loginctl check failed, skipping: {e}", file=sys.stderr)
+        log(f"loginctl check failed, skipping: {e}")
         return True
 
 
-def grab_frames(gst_launch: str, target_object: str, width: int, height: int,
-                 num_buffers: int, timeout: float) -> list:
-    """Runs a short gst-launch pipeline and returns the raw GRAY8 frames it
-    produced, or [] on any error/timeout (camera busy, missing, etc.)."""
+def stream_and_detect(detector: "cv2.CascadeClassifier", gst_launch: str,
+                          target_object: str, width: int, height: int,
+                          num_buffers: int, timeout: float,
+                          settle_frames: int) -> tuple:
+    """Streams GRAY8 frames from a gst-launch pipeline, runs Haar detection
+    per frame after `settle_frames` for auto-exposure, and terminates the
+    pipeline as soon as a face is found.
+
+    Returns (face_seen, frames_seen, error). On any failure to start or read
+    the pipeline (camera busy, missing, timed out), returns (False, n, True)
+    so the caller fails open without locking. `num_buffers` is the upper
+    bound on frames the pipeline will emit; the overall `timeout` caps the
+    whole read."""
     frame_size = width * height
     cmd = [
         gst_launch, "-q",
@@ -54,39 +83,93 @@ def grab_frames(gst_launch: str, target_object: str, width: int, height: int,
         "!", "fdsink", "fd=1",
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        print("presence-lock: gst-launch timed out, camera unreadable", file=sys.stderr)
-        return []
-    if proc.returncode != 0:
-        print(
-            f"presence-lock: gst-launch exited {proc.returncode}: "
-            f"{proc.stderr.decode(errors='replace').strip()}",
-            file=sys.stderr,
-        )
-        return []
-    data = proc.stdout
-    frames = [
-        np.frombuffer(data[i:i + frame_size], dtype=np.uint8).reshape(height, width)
-        for i in range(0, len(data) - frame_size + 1, frame_size)
-    ]
-    return frames
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except FileNotFoundError:
+        log(f"gst-launch binary not found: {gst_launch}")
+        return False, 0, True
+    except Exception as e:
+        log(f"gst-launch failed to start: {e}")
+        return False, 0, True
+
+    deadline = time.time() + timeout
+    buf = bytearray()
+    consumed = 0  # bytes already turned into frames
+    frames_seen = 0
+    face_seen = False
+    try:
+        while True:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                log("gst-launch timed out, camera unreadable")
+                return False, frames_seen, True
+            # Read up to one frame's worth (or the remainder of a partial frame).
+            want = frame_size - ((len(buf) - consumed) % frame_size)
+            chunk = proc.stdout.read(want)
+            if not chunk:
+                # Pipeline closed stdout: either finished (num_buffers reached)
+                # or exited. Check return code for a real error below.
+                break
+            buf.extend(chunk)
+            while (len(buf) - consumed) >= frame_size:
+                gray = np.frombuffer(
+                    bytes(buf[consumed:consumed + frame_size]),
+                    dtype=np.uint8,
+                ).reshape(height, width)
+                consumed += frame_size
+                frames_seen += 1
+                # Drop processed bytes to bound memory.
+                if consumed > 65536:
+                    del buf[:consumed]
+                    consumed = 0
+                # Skip the first `settle_frames` for auto-exposure to settle,
+                # matching the old any_face(frames[-5:]) behaviour.
+                if frames_seen <= settle_frames:
+                    continue
+                eq = cv2.equalizeHist(gray)
+                # Params tuned live against real images (a portrait with a
+                # face, a camera frame of an empty room): equalizeHist +
+                # scaleFactor=1.05, minNeighbors=4, minSize=50 cleanly
+                # separated the two (1 face vs. 0); scaleFactor 1.1+ missed
+                # the real face, minNeighbors 3 / minSize 40 false-
+                # positived on the empty room.
+                faces = detector.detectMultiScale(eq, scaleFactor=1.05,
+                                                  minNeighbors=4, minSize=(50, 50))
+                if len(faces) > 0:
+                    face_seen = True
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait()
+                    return True, frames_seen, False
+    except Exception as e:
+        log(f"error reading gst-launch: {e}")
+        proc.kill()
+        proc.wait()
+        return False, frames_seen, True
+
+    # Pipeline closed stdout normally (num_buffers reached) without a face.
+    rc = proc.wait()
+    if rc != 0:
+        err = proc.stderr.read().decode(errors="replace").strip()
+        log(f"gst-launch exited {rc}: {err}")
+        return False, frames_seen, True
+    return face_seen, frames_seen, False
 
 
-def any_face(detector: "cv2.CascadeClassifier", frames: list) -> bool:
-    """Runs Haar detection on the last few frames (auto-exposure needs a
-    handful of frames to settle) and returns True if any shows a face."""
-    # Params tuned live against real images (a portrait with a face, a
-    # camera frame of an empty room): equalizeHist + scaleFactor=1.05,
-    # minNeighbors=4, minSize=50 cleanly separated the two (1 face vs. 0);
-    # scaleFactor 1.1+ missed the real face, minNeighbors 3 / minSize 40
-    # false-positived on the empty room.
-    for gray in frames[-5:]:
-        gray = cv2.equalizeHist(gray)
-        faces = detector.detectMultiScale(gray, scaleFactor=1.05, minNeighbors=4, minSize=(50, 50))
-        if len(faces) > 0:
-            return True
-    return False
+def resumed_during_check(resumed_file: str, start: float) -> bool:
+    """True if the on-resume marker was touched after the check started."""
+    try:
+        mtime = os.path.getmtime(resumed_file)
+    except FileNotFoundError:
+        return False
+    except OSError as e:
+        # Unreadable marker: treat as not resumed (fail toward the existing
+        # behaviour, i.e. let the face result decide).
+        log(f"could not stat {resumed_file}: {e}")
+        return False
+    return mtime > start
 
 
 def main() -> int:
@@ -96,36 +179,90 @@ def main() -> int:
                      help="PipeWire camera node name")
     ap.add_argument("--width", type=int, default=640)
     ap.add_argument("--height", type=int, default=360)
-    ap.add_argument("--num-buffers", type=int, default=20, help="frames to capture")
+    ap.add_argument("--num-buffers", type=int, default=20, help="upper bound on frames to capture")
+    ap.add_argument("--settle-frames", type=int, default=15,
+                    help="frames to skip before running detection (auto-exposure settle)")
     ap.add_argument("--timeout", type=float, default=10.0, help="seconds to wait for gst-launch")
+    ap.add_argument("--fp-grace", type=float, default=3.0,
+                    help="seconds to wait for a fingerprint after a face-less check")
     ap.add_argument("--cascade", required=True, help="path to the Haar cascade XML file")
+    ap.add_argument("--resumed-file",
+                    default=os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/run/user/1000"),
+                                         "presence-lock.resumed"),
+                    help="path to the on-resume marker touched by hypridle")
     args = ap.parse_args()
+
+    start = time.time()
+    log(f"start target={args.target_object} cascade={args.cascade}")
 
     detector = cv2.CascadeClassifier(args.cascade)
     if detector.empty():
-        print("presence-lock: failed to load Haar cascade", file=sys.stderr)
+        log("failed to load Haar cascade")
         return 1
 
-    frames = grab_frames(
-        args.gst_launch, args.target_object, args.width, args.height,
-        args.num_buffers, args.timeout,
+    # Run fprintd-verify concurrently with the face check so a finger touch
+    # during the check also prevents the lock. Any failure (binary missing,
+    # no enrolled finger, no reader, polkit deny, daemon down) leaves
+    # fingerprint != "match", so the face result alone decides: the
+    # pre-fingerprint behaviour.
+    fp_proc = None
+    try:
+        fp_proc = subprocess.Popen(["fprintd-verify"],
+                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    except OSError as e:
+        log(f"fprintd-verify unavailable, ignoring fingerprint: {e}")
+
+    face, frames_seen, cam_error = stream_and_detect(
+        detector, args.gst_launch, args.target_object, args.width, args.height,
+        args.num_buffers, args.timeout, args.settle_frames,
     )
-    if not frames:
+    if cam_error or frames_seen == 0:
         # Camera unreadable (busy, missing, timed out): fail open, no lock.
-        print("presence-lock: no frames captured, camera unavailable, not locking", file=sys.stderr)
+        if fp_proc:
+            fp_proc.kill()
+            fp_proc.wait()
+        log(f"camera unavailable (frames_seen={frames_seen}), not locking")
         return 0
 
-    if any_face(detector, frames):
+    fingerprint = "unavailable"
+    if fp_proc:
+        if face:
+            # A face already decides; kill fprintd at once (no added latency).
+            fp_proc.kill()
+            fp_proc.wait()
+            fingerprint = "not-needed"
+        else:
+            # Face check is done; give a finger touch a short grace period.
+            try:
+                out, _ = fp_proc.communicate(timeout=args.fp_grace)
+                matched = fp_proc.returncode == 0 and b"verify-match" in out
+                fingerprint = "match" if matched else "no-match"
+            except subprocess.TimeoutExpired:
+                fp_proc.kill()
+                fp_proc.wait()
+                fingerprint = "timeout"
+
+    resumed = resumed_during_check(args.resumed_file, start)
+    if face:
+        decision = "skip (face)"
+    elif fingerprint == "match":
+        decision = "skip (fingerprint)"
+    elif resumed:
+        decision = "skip (resumed during check)"
+    else:
+        decision = None
+    log(f"face={face} frames={frames_seen} fingerprint={fingerprint} "
+        f"resumed={resumed} decision={decision or 'lock'}")
+    if decision:
         return 0
 
     if session_locked():
         return 0
 
-    print("presence-lock: no face seen, locking", file=sys.stderr)
     try:
         subprocess.run(["loginctl", "lock-session"], timeout=5, check=False)
     except Exception as e:
-        print(f"presence-lock: lock-session failed: {e}", file=sys.stderr)
+        log(f"lock-session failed: {e}")
     return 0
 
 
