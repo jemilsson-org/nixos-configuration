@@ -1141,6 +1141,14 @@ in
     };
   };
 
+  # Expose fafnir's age identity as $AGE_IDENTITY so `age -d -i "$AGE_IDENTITY"`
+  # decrypts via the fafnir age plugin (private key in TPM, served at
+  # $XDG_RUNTIME_DIR/fafnir/age.sock). The identity file is a world-readable
+  # store path; only the corresponding private key is sensitive (in the TPM).
+  environment.sessionVariables.AGE_IDENTITY =
+    let identity = pkgs.writeText "fafnir-age-identity" "AGE-PLUGIN-FAFNIR-1GDA39S\n";
+    in "${identity}";
+
   # fafnir-keepassxc-bridge: native-messaging host for KeePassXC-Browser
   # (Chromium/Firefox), serving credentials out of fafnir's vault.
   services.fafnir-keepassxc-bridge = {
