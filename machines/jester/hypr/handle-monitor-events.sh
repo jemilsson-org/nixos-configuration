@@ -26,7 +26,7 @@ while [ -S "$SOCKET" ]; do
                 # (MST panels enumerate one at a time) reconfigures only once.
                 sleep 2
                 while read -r -t 0.05 line; do :; done
-                "$HOME/.config/hypr/monitor-setup.py"
+                hypr-monitor-setup
                 # Font sizes depend on the PPI of the connected panels, so
                 # recompute them whenever the set of monitors changes. Not
                 # repo-managed yet: skip if the live script is absent.

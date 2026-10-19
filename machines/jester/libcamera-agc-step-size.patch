@@ -5,12 +5,12 @@
  /*
   * The exposure is optimal when the mean sample value of the histogram is
 - * in the middle of the range.
-+ * in the middle of the range. (An earlier 0.40/0.45 darker bias fought a
-+ * washed-out look that was really the missing CCM; with the ov2740 tuning
-+ * file providing one, the upstream middle target is right again.)
++ * in the middle of the range. Target 0.4, not upstream 0.5: the MSV comes
++ * from linear raw stats, so 0.5 lands ~1.5 stops hot after gamma and CCM
++ * (18-33% of output pixels clipped at equilibrium, measured 2026-10-19).
   */
 -static constexpr float kExposureOptimal = kExposureBinsCount / 2.0;
-+static constexpr float kExposureOptimal = kExposureBinsCount * 0.5;
++static constexpr float kExposureOptimal = kExposureBinsCount * 0.4;
  
  /*
 - * This implements the hysteresis for the exposure adjustment.
@@ -154,7 +154,7 @@
 +			}
 +		} else if (factor < 1.0f) {
 +			/* Darken: lower gain first, then exposure. */
-+			if (again > context.configuration.agc.again10) {
++			if (again > context.configuration.agc.againMin) {
 +				double next = again * factor;
 +				if (again - next < context.configuration.agc.againMinStep)
 +					again -= context.configuration.agc.againMinStep;
