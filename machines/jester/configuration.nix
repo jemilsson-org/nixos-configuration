@@ -65,6 +65,7 @@ in
     ./v4l2loopback.nix
     ./room-watch.nix
     ./presence-lock.nix
+    ./nl1-builder.nix
     ./netns-claude-glecom.nix
     ./pi-lens.nix
     ./nix-retry.nix
@@ -1528,6 +1529,10 @@ in
     hostNames = [ "eu.nixbuild.net" ];
     publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPIQCZc54poJ8vqawd8TraNryQeJnvH1eLpIDgbiqymM";
   };
+
+  # nl1 build server (nl1-builder.nix) stays off until the guest's first boot.
+  # Then enable it with:
+  #   services.nl1-builder.keys = { cacheKey = "nl1-vm4-1:..."; hostKey = "ssh-ed25519 AAAA..."; };
 
   # Debounce for MX Anywhere 3S failing switch handled by mx-debounce systemd service.
 
