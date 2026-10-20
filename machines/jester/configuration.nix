@@ -195,7 +195,12 @@ in
   # and stay.
   systemd.services.nix-inode-guard = {
     description = "Nix GC when root inode use exceeds 90%";
-    serviceConfig.Type = "oneshot";
+    serviceConfig = {
+      Type = "oneshot";
+      Nice = 19;
+      CPUSchedulingPolicy = "idle";
+      IOSchedulingClass = "idle";
+    };
     path = [ config.nix.package pkgs.coreutils ];
     script = ''
       read -r total free < <(stat -f -c '%c %d' /)
@@ -282,14 +287,14 @@ in
     # true per-build hard cap needs nix use-cgroups + auto-allocate-uids
     # (experimental); not enabled here.
     MemoryHigh = "16G";
-    # CPU: hard ceiling of 6 of 12 threads (throttle, never kills — safe on
+    # CPU: hard ceiling of 4 of 12 threads (throttle, never kills — safe on
     # the shared cgroup), at LOW priority so local builds yield to the
     # interactive session. CPUWeight is the cgroup-v2 lever (default 100; 10
     # gives builds ~1/10 of contended share); idle IO class keeps disk
     # responsive. The daemon already runs SCHED_IDLE (see base config), so no
     # Nice= is needed. remote builders do the heavy lifting; these only bound a
     # local fallback or a flag-forced build that slips the hook.
-    CPUQuota = "600%";
+    CPUQuota = "400%";
     CPUWeight = 10;
     IOSchedulingClass = "idle";
   };
@@ -360,7 +365,10 @@ in
   # systemd.oomd.enableUserSlices ships slice.d/overrides.conf with
   # ManagedOOMMemoryPressure=kill on every slice, and the slice.d directory
   # outranks the slice's unit file. zz- sorts after overrides.conf.
+  # CPUQuota (2026-10-20): background caps total 8 of 12 threads (ai 4,
+  # nix-daemon 4) so the desktop keeps 4; throttles, never kills.
   systemd.user.slices.ai.sliceConfig = {
+    CPUQuota = "400%";
     CPUWeight = 50;
     IOWeight = 50;
     MemoryHigh = "16G";
@@ -368,6 +376,7 @@ in
     MemorySwapMax = "6G";
   };
   systemd.user.slices.ai-jobs.sliceConfig = {
+    CPUQuota = "300%";
     CPUWeight = 10;
     IOWeight = 10;
     MemoryHigh = "10G";
