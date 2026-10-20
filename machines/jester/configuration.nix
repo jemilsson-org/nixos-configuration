@@ -349,29 +349,30 @@ in
   # Desktop first: Hyprland (session.slice) and apps (app.slice) outrank AI work.
   # Inside ai.slice, claude itself (weight 100) outranks the Bash commands it
   # runs, which the claude wrapper moves to ai-jobs.slice (a child of ai.slice).
-  # Hard caps kill only inside these slices (kernel cgroup OOM): MemoryHigh
-  # throttles and swaps, MemoryMax kills. oomd pressure kill (40%, below the
-  # 80% slice default oomctl showed) drops the worst descendant cgroup under
-  # sustained pressure. 2026-10-10: ~29 realesrgan workers in ai-jobs held 22G
-  # shmem plus heavy swap, and the box thrashed before any kill fired.
-  # oomd pressure kill (40%) lives in per-slice drop-ins, not sliceConfig:
+  # Cap, don't kill: MemoryHigh throttles and swaps; MemoryMax (kernel cgroup
+  # OOM, only inside the slice) is the last resort. oomd pressure kill is OFF
+  # for these slices: throttling at MemoryHigh is itself reclaim pressure, so
+  # a 40% pressure kill fired on the cap working as designed (107 kills of
+  # claude sessions in 7 days to 2026-10-20). 2026-10-10 thrash (29 realesrgan
+  # workers, 22G shmem) is now bounded by MemoryHigh/MemorySwapMax instead.
+  # Caps sized so desktop + nix-daemon stay usable on the 31 GiB box (2026-10-20).
+  # The override lives in per-slice drop-ins, not sliceConfig:
   # systemd.oomd.enableUserSlices ships slice.d/overrides.conf with
-  # ManagedOOMMemoryPressureLimit=80% on every slice, and the slice.d
-  # directory outranks the slice's unit file, so a unit-file setting never
-  # takes effect. zz- sorts after overrides.conf within the drop-in dir.
+  # ManagedOOMMemoryPressure=kill on every slice, and the slice.d directory
+  # outranks the slice's unit file. zz- sorts after overrides.conf.
   systemd.user.slices.ai.sliceConfig = {
     CPUWeight = 50;
     IOWeight = 50;
-    MemoryHigh = "24G";
-    MemoryMax = "26G";
-    MemorySwapMax = "8G";
+    MemoryHigh = "16G";
+    MemoryMax = "18G";
+    MemorySwapMax = "6G";
   };
   systemd.user.slices.ai-jobs.sliceConfig = {
     CPUWeight = 10;
     IOWeight = 10;
-    MemoryHigh = "16G";
-    MemoryMax = "18G";
-    MemorySwapMax = "4G";
+    MemoryHigh = "10G";
+    MemoryMax = "12G";
+    MemorySwapMax = "3G";
   };
   systemd.user.slices.session.sliceConfig = { CPUWeight = 400; MemoryLow = "1G"; };
   systemd.user.slices.app.sliceConfig = { CPUWeight = 200; MemoryLow = "2G"; };
@@ -383,7 +384,7 @@ in
       "[Service]\nSlice=ai.slice\n")
       [ "claude-api" "claude-intercept" "venice-api" "teleclaude" "muninn" ]
     ++ map (n: pkgs.writeTextDir "lib/systemd/user/${n}.slice.d/zz-oomd.conf"
-      "[Slice]\nManagedOOMMemoryPressure=kill\nManagedOOMMemoryPressureLimit=40%\n")
+      "[Slice]\nManagedOOMMemoryPressure=auto\n")
       [ "ai" "ai-jobs" ]
     ++ [ (pkgs.writeTextDir "lib/systemd/user/disk-cleanup.service.d/low-priority.conf"
       "[Service]\nCPUWeight=20\nIOWeight=20\nNice=10\n") ];
