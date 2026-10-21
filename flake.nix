@@ -90,8 +90,8 @@
         overlays = [ overlay-unstable ];
       };
 
-      # Creates the laptop-side secrets for the nl1 build server (SSH key, TLS
-      # client key + CSR) and prints what the admin needs. Run:
+      # Creates the laptop-side SSH key for the nl1 build server and prints
+      # what the admin needs. Run:
       # nix run .#nl1-builder-keygen
       # See machines/jester/nl1-builder.nix.
       nl1-builder-keygen = pkgs.writeShellApplication {
@@ -104,28 +104,12 @@
             sudo ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" \
               -C "nix-daemon@jester->nl1-builder" -f "$dir/ssh_ed25519"
           fi
-          if ! sudo test -e "$dir/client.key"; then
-            sudo sh -c 'umask 077 && ${pkgs.openssl}/bin/openssl genpkey -algorithm ed25519 -out "$1"' _ "$dir/client.key"
-          fi
-          sudo ${pkgs.openssl}/bin/openssl req -new -key "$dir/client.key" \
-            -subj "/CN=jester-nix-daemon" -out "$dir/client.csr"
 
           echo "== SSH public key: add to the builder's nix-ssh authorized keys =="
           sudo cat "$dir/ssh_ed25519.pub"
           echo
-          echo "== TLS client CSR: sign with the private CA, on the admin's machine =="
-          sudo cat "$dir/client.csr"
-          cat <<'EOF'
-
-          Sign (CA key stays on the admin's machine; never in a repo):
-            printf 'basicConstraints=CA:FALSE\nextendedKeyUsage=clientAuth\n' > ext.cnf
-            openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
-              -days 365 -extfile ext.cnf -out client.crt
-          Install the result on this laptop, root-only:
-            sudo install -m644 -o root -g root client.crt /etc/nix/nl1-builder/client.crt
-          Then, after the builder's first boot, set services.nl1-builder.keys
-          in machines/jester/configuration.nix and rebuild.
-          EOF
+          echo "Then, after the builder's first boot, set services.nl1-builder.keys
+          in machines/jester/configuration.nix and rebuild."
         '';
       };
 
@@ -137,7 +121,7 @@
       nl1Eval =
         let
           lib = nixpkgs.lib;
-          dummyCache = "nl1-vm4-1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+          dummyCache = "nl1-builder:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
           dummyHost = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDummyDummyDummyDummyDummyDummyDummyDummy";
           jester = self.nixosConfigurations.jester;
           off = jester.config;
@@ -177,6 +161,8 @@
         assert lib.hasInfix "-connect 175.110.121.112:443" on.programs.ssh.extraConfig;
         assert lib.hasInfix "User nix-ssh" on.programs.ssh.extraConfig;
         assert lib.hasInfix "IdentitiesOnly yes" on.programs.ssh.extraConfig;
+        assert !lib.hasInfix "-cert" on.programs.ssh.extraConfig;
+        assert !lib.hasInfix "-key" on.programs.ssh.extraConfig;
         assert on.programs.ssh.knownHosts.nl1-builder.publicKey == dummyHost;
         pkgs.writeText "jester-nl1-builder-eval" (builtins.toJSON {
           off = hosts off;
