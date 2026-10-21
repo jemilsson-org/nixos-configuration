@@ -8,6 +8,9 @@ Case 2: gst-launch exits non-zero (camera busy) -> fail open, no lock.
 Case 3: blank frames but resumed marker touched after start -> no lock.
 Case 4: blank frames, fprintd-verify reports verify-match -> no lock.
 Case 5: blank frames, fprintd-verify reports no match -> lock.
+Case 7: frames too dark to judge (mean grey 14) -> fail open, no lock.
+Case 8: resumed marker touched after the decision but before lock-session
+         (the 150 ms race seen live) -> no lock.
 Case 6: a face-bearing frame after settle -> pipeline terminated early, no
          lock. The fake gst-launch emits blank frames then one face frame
          then more blanks; we check the script stopped reading before the
@@ -50,16 +53,22 @@ def write_exe(path, contents):
     os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
 
-def make_fakes(bindir, calls_file, gst_mode, fprintd_match):
+def make_fakes(bindir, calls_file, gst_mode, fprintd_match, late_resume_file=None):
     """gst_mode: 'blank' for all-zero frames, 'error' for exit 1, 'face' for
     blank frames then a face frame then more blanks."""
     frame_size = WIDTH * HEIGHT
-    blank = b"\x00" * frame_size
+    # Mid-grey, above --min-luma: a lit room with nobody in it.
+    blank = b"\x80" * frame_size
     face = make_face_frame()
 
     frames_file = os.path.join(bindir, "frames.bin")
     if gst_mode == "error":
         gst_body = "#!/bin/sh\necho 'fake gst-launch: camera busy' >&2\nexit 1\n"
+    elif gst_mode == "dark":
+        rng = np.random.default_rng(0)
+        with open(frames_file, "wb") as f:
+            f.write(rng.integers(9, 21, frame_size * NUM_BUFFERS, dtype=np.uint8).tobytes())
+        gst_body = f"#!/bin/sh\ncat {frames_file}\n"
     elif gst_mode == "blank":
         with open(frames_file, "wb") as f:
             f.write(blank * NUM_BUFFERS)
@@ -75,10 +84,14 @@ def make_fakes(bindir, calls_file, gst_mode, fprintd_match):
     write_exe(os.path.join(bindir, "gst-launch-1.0"), gst_body)
 
     # Records every call; answers LockedHint "no" so the script proceeds.
+    # With late_resume_file, the LockedHint query (made after the decision)
+    # also touches the resume marker: user activity landing in the gap
+    # between decision and lock-session.
+    touch = f'touch "{late_resume_file}"; ' if late_resume_file else ""
     loginctl_body = f"""#!/bin/sh
 echo "$*" >> "{calls_file}"
 case "$1 $2" in
-  "show-session self") echo no ;;
+  "show-session self") {touch}echo no ;;
 esac
 """
     write_exe(os.path.join(bindir, "loginctl"), loginctl_body)
@@ -93,15 +106,15 @@ esac
 
 
 def run_case(cascade, gst_mode, fprintd_match, resume_after_start=False,
-             extra_args=None):
+             late_resume=False, extra_args=None):
     with tempfile.TemporaryDirectory() as td:
         bindir = os.path.join(td, "bin")
         os.makedirs(bindir)
         calls_file = os.path.join(td, "calls.log")
         open(calls_file, "w").close()
-        make_fakes(bindir, calls_file, gst_mode, fprintd_match)
-
         resumed_file = os.path.join(td, "presence-lock.resumed")
+        make_fakes(bindir, calls_file, gst_mode, fprintd_match,
+                   resumed_file if late_resume else None)
         env = dict(os.environ)
         env["PATH"] = bindir + ":" + env["PATH"]
         env["XDG_RUNTIME_DIR"] = td
@@ -112,6 +125,7 @@ def run_case(cascade, gst_mode, fprintd_match, resume_after_start=False,
             "--num-buffers", str(NUM_BUFFERS), "--timeout", "10",
             "--settle-frames", "3",
             "--fp-grace", "2",
+            "--resume-grace", "0.1",
             "--resumed-file", resumed_file,
         ]
         if extra_args:
@@ -172,6 +186,20 @@ def main():
     # The face is frame 6 (0-indexed 5), so frames_seen should be 6, well
     # under NUM_BUFFERS=20.
     assert "frames=6" in err, f"face case: expected frames=6 (early stop), got: {err}"
+
+    # Case 7: too dark to judge -> fail open, no lock.
+    rc, locked, err = run_case(cascade, gst_mode="dark", fprintd_match=False)
+    assert rc == 0, f"dark case: expected exit 0, got {rc}: {err}"
+    assert not locked, f"dark case: lock-session must NOT be called: {err}"
+    assert "decision=skip (too dark)" in err, f"dark case: expected too-dark skip: {err}"
+
+    # Case 8: resume lands after the decision, before lock-session -> no lock.
+    rc, locked, err = run_case(cascade, gst_mode="blank", fprintd_match=False,
+                               late_resume=True)
+    assert rc == 0, f"late-resume case: expected exit 0, got {rc}: {err}"
+    assert "resumed=False decision=lock" in err, f"late-resume case: decision should be lock: {err}"
+    assert not locked, f"late-resume case: lock-session must NOT be called: {err}"
+    assert "resumed before lock" in err, f"late-resume case: expected re-check log: {err}"
 
     print("presence-lock-test: ok")
 

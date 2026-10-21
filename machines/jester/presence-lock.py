@@ -28,6 +28,7 @@ fingerprint result, resumed-during-check, decision) to stderr, which
 hypridle's children send to the user journal.
 """
 import argparse
+import collections
 import os
 import subprocess
 import sys
@@ -39,6 +40,31 @@ import numpy as np
 # nixpkgs' opencv4 python bindings don't ship cv2.data (no bundled cascade
 # dir), unlike upstream pip wheels, so the cascade path is passed in
 # explicitly by presence-lock.nix instead of relying on cv2.data.haarcascades.
+
+
+# Low-light handling, measured 2026-10-21 on the OV2740 after dusk: frames
+# sit at the noise floor (mean grey 14/255, 1st-99th percentile 9-20), where
+# a single equalised frame gave 0/25 Haar hits with the user at the desk.
+# Averaging the last AVG_FRAMES frames, stretching and blurring before
+# equalisation raised that to 7/23. Below MIN_LUMA the picture is too dark
+# to tell an empty room from a present user, so the check fails open (the
+# unconditional 120s hypridle listener still locks).
+AVG_FRAMES = 3
+BLUR_KERNEL = (7, 7)
+
+
+def mean(xs: list) -> float:
+    return sum(xs) / len(xs) if xs else 0.0
+
+
+def detect_faces(detector: "cv2.CascadeClassifier", frames) -> "np.ndarray":
+    """Haar detection on the temporal mean of `frames`, contrast-stretched,
+    blurred and equalised (see the low-light note above)."""
+    avg = np.mean(np.stack(frames).astype(np.float32), axis=0)
+    img = cv2.normalize(avg, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    img = cv2.equalizeHist(cv2.GaussianBlur(img, BLUR_KERNEL, 0))
+    return detector.detectMultiScale(img, scaleFactor=1.05, minNeighbors=4,
+                                     minSize=(50, 50))
 
 
 def log(msg: str) -> None:
@@ -68,7 +94,8 @@ def stream_and_detect(detector: "cv2.CascadeClassifier", gst_launch: str,
     per frame after `settle_frames` for auto-exposure, and terminates the
     pipeline as soon as a face is found.
 
-    Returns (face_seen, frames_seen, error). On any failure to start or read
+    Returns (face_seen, frames_seen, error, mean_luma) where mean_luma is
+    the mean grey level of the post-settle frames. On any failure to start or read
     the pipeline (camera busy, missing, timed out), returns (False, n, True)
     so the caller fails open without locking. `num_buffers` is the upper
     bound on frames the pipeline will emit; the overall `timeout` caps the
@@ -86,22 +113,24 @@ def stream_and_detect(detector: "cv2.CascadeClassifier", gst_launch: str,
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except FileNotFoundError:
         log(f"gst-launch binary not found: {gst_launch}")
-        return False, 0, True
+        return False, 0, True, 0.0
     except Exception as e:
         log(f"gst-launch failed to start: {e}")
-        return False, 0, True
+        return False, 0, True, 0.0
 
     deadline = time.time() + timeout
     buf = bytearray()
     consumed = 0  # bytes already turned into frames
     frames_seen = 0
     face_seen = False
+    recent: collections.deque = collections.deque(maxlen=AVG_FRAMES)
+    lumas: list = []
     try:
         while True:
             remaining = deadline - time.time()
             if remaining <= 0:
                 log("gst-launch timed out, camera unreadable")
-                return False, frames_seen, True
+                return False, frames_seen, True, mean(lumas)
             # Read up to one frame's worth (or the remainder of a partial frame).
             want = frame_size - ((len(buf) - consumed) % frame_size)
             chunk = proc.stdout.read(want)
@@ -121,19 +150,12 @@ def stream_and_detect(detector: "cv2.CascadeClassifier", gst_launch: str,
                 if consumed > 65536:
                     del buf[:consumed]
                     consumed = 0
-                # Skip the first `settle_frames` for auto-exposure to settle,
-                # matching the old any_face(frames[-5:]) behaviour.
+                # Skip the first `settle_frames` for auto-exposure to settle.
                 if frames_seen <= settle_frames:
                     continue
-                eq = cv2.equalizeHist(gray)
-                # Params tuned live against real images (a portrait with a
-                # face, a camera frame of an empty room): equalizeHist +
-                # scaleFactor=1.05, minNeighbors=4, minSize=50 cleanly
-                # separated the two (1 face vs. 0); scaleFactor 1.1+ missed
-                # the real face, minNeighbors 3 / minSize 40 false-
-                # positived on the empty room.
-                faces = detector.detectMultiScale(eq, scaleFactor=1.05,
-                                                  minNeighbors=4, minSize=(50, 50))
+                recent.append(gray)
+                lumas.append(float(gray.mean()))
+                faces = detect_faces(detector, recent)
                 if len(faces) > 0:
                     face_seen = True
                     proc.terminate()
@@ -142,20 +164,20 @@ def stream_and_detect(detector: "cv2.CascadeClassifier", gst_launch: str,
                     except subprocess.TimeoutExpired:
                         proc.kill()
                         proc.wait()
-                    return True, frames_seen, False
+                    return True, frames_seen, False, mean(lumas)
     except Exception as e:
         log(f"error reading gst-launch: {e}")
         proc.kill()
         proc.wait()
-        return False, frames_seen, True
+        return False, frames_seen, True, mean(lumas)
 
     # Pipeline closed stdout normally (num_buffers reached) without a face.
     rc = proc.wait()
     if rc != 0:
         err = proc.stderr.read().decode(errors="replace").strip()
         log(f"gst-launch exited {rc}: {err}")
-        return False, frames_seen, True
-    return face_seen, frames_seen, False
+        return False, frames_seen, True, mean(lumas)
+    return face_seen, frames_seen, False, mean(lumas)
 
 
 def resumed_during_check(resumed_file: str, start: float) -> bool:
@@ -178,13 +200,19 @@ def main() -> int:
     ap.add_argument("--target-object", default="libcamera_input.__SB_.PC00.LNK1",
                      help="PipeWire camera node name")
     ap.add_argument("--width", type=int, default=640)
-    ap.add_argument("--height", type=int, default=360)
+    # 4:3: libcamera crops 640x360 from the sensor, cutting the chin
+    # off a user sitting close; Haar needs the whole face.
+    ap.add_argument("--height", type=int, default=480)
     ap.add_argument("--num-buffers", type=int, default=20, help="upper bound on frames to capture")
     ap.add_argument("--settle-frames", type=int, default=15,
                     help="frames to skip before running detection (auto-exposure settle)")
     ap.add_argument("--timeout", type=float, default=10.0, help="seconds to wait for gst-launch")
     ap.add_argument("--fp-grace", type=float, default=3.0,
                     help="seconds to wait for a fingerprint after a face-less check")
+    ap.add_argument("--min-luma", type=float, default=30.0,
+                    help="mean grey level below which the camera is too dark to judge")
+    ap.add_argument("--resume-grace", type=float, default=0.5,
+                    help="seconds to wait for a late on-resume marker before locking")
     ap.add_argument("--cascade", required=True, help="path to the Haar cascade XML file")
     ap.add_argument("--resumed-file",
                     default=os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/run/user/1000"),
@@ -212,7 +240,7 @@ def main() -> int:
     except OSError as e:
         log(f"fprintd-verify unavailable, ignoring fingerprint: {e}")
 
-    face, frames_seen, cam_error = stream_and_detect(
+    face, frames_seen, cam_error, luma = stream_and_detect(
         detector, args.gst_launch, args.target_object, args.width, args.height,
         args.num_buffers, args.timeout, args.settle_frames,
     )
@@ -224,6 +252,7 @@ def main() -> int:
         log(f"camera unavailable (frames_seen={frames_seen}), not locking")
         return 0
 
+    dark = not face and luma < args.min_luma
     fingerprint = "unavailable"
     if fp_proc:
         if face:
@@ -249,14 +278,24 @@ def main() -> int:
         decision = "skip (fingerprint)"
     elif resumed:
         decision = "skip (resumed during check)"
+    elif dark:
+        decision = "skip (too dark)"
     else:
         decision = None
-    log(f"face={face} frames={frames_seen} fingerprint={fingerprint} "
+    log(f"face={face} frames={frames_seen} luma={luma:.1f} fingerprint={fingerprint} "
         f"resumed={resumed} decision={decision or 'lock'}")
     if decision:
         return 0
 
     if session_locked():
+        return 0
+
+    # Last-moment race guard: hypridle's on-resume can land just after the
+    # decision (observed 150 ms later, 2026-10-21 18:02:36), so wait briefly
+    # and re-check the marker right before locking.
+    time.sleep(args.resume_grace)
+    if resumed_during_check(args.resumed_file, start):
+        log("resumed before lock, not locking")
         return 0
 
     try:
