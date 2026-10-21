@@ -124,12 +124,12 @@
           dummyCache = "nl1-builder:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
           dummyHost = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDummyDummyDummyDummyDummyDummyDummyDummy";
           jester = self.nixosConfigurations.jester;
-          off = jester.config;
+          off = (jester.extendModules { modules = [ { services.nl1-builder.keys = lib.mkForce null; } ]; }).config;
           master = (jester.extendModules {
-            modules = [ { disabledModules = [ ./machines/jester/nl1-builder.nix ]; } ];
+            modules = [ { disabledModules = [ ./machines/jester/nl1-builder.nix ]; } { options.services.nl1-builder = lib.mkOption { type = lib.types.anything; default = { }; }; } ];
           }).config;
           on = (jester.extendModules {
-            modules = [ { services.nl1-builder.keys = { cacheKey = dummyCache; hostKey = dummyHost; }; } ];
+            modules = [ { services.nl1-builder.keys = lib.mkForce { cacheKey = dummyCache; hostKey = dummyHost; }; } ];
           }).config;
           hosts = c: map (m: m.hostName) c.nix.buildMachines;
           sort = builtins.sort builtins.lessThan;
@@ -144,6 +144,7 @@
           m = (builtins.head (nl1 on));
         in
         assert off.services.nl1-builder.keys == null;
+        assert jester.config.services.nl1-builder.keys != null;
         assert visible off == visible master;
         assert !(builtins.elem "nl1-builder" (hosts off));
         assert on.nix.distributedBuilds;

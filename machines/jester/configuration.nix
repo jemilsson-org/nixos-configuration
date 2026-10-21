@@ -1540,9 +1540,11 @@ in
     publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPIQCZc54poJ8vqawd8TraNryQeJnvH1eLpIDgbiqymM";
   };
 
-  # nl1 build server (nl1-builder.nix) stays off until the guest's first boot.
-  # Then enable it with:
-  #   services.nl1-builder.keys = { cacheKey = "nl1-vm4-1:..."; hostKey = "ssh-ed25519 AAAA..."; };
+  # nl1 build server (nl1-builder.nix): nl1-vm4 behind nl1:443 (TLS SNI routing, SSH key auth).
+  services.nl1-builder.keys = {
+    cacheKey = "nl1-builder:wD6HQu6PzFbvyKdhW3AkpnBRk1968jNbYVVZm47Ddwc=";
+    hostKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJnEerjtjdPTVwgyXMiFdNInYIoULUlIL5qP2rZuEotF";
+  };
 
   # Debounce for MX Anywhere 3S failing switch handled by mx-debounce systemd service.
 
