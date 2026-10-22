@@ -150,7 +150,6 @@
         assert on.nix.distributedBuilds;
         assert on.nix.settings.builders-use-substitutes;
         assert on.nix.settings.fallback;
-        assert on.nix.settings.connect-timeout == 10;
         assert builtins.length (nl1 on) == 1;
         assert m.protocol == "ssh-ng";
         assert m.systems == [ "x86_64-linux" ];
@@ -160,7 +159,7 @@
         assert builtins.elem "ssh-ng://nl1-builder" (subs on);
         assert builtins.elem dummyCache on.nix.settings.extra-trusted-public-keys;
         assert lib.hasInfix "/bin/openssl s_client -quiet -no_ign_eof -verify_return_error" on.programs.ssh.extraConfig;
-        assert lib.hasInfix "timeout 10" on.programs.ssh.extraConfig;
+        assert !(lib.hasInfix "timeout 10" on.programs.ssh.extraConfig);
         assert lib.hasInfix "-verify_hostname builder.decentgaming.io -servername builder.decentgaming.io" on.programs.ssh.extraConfig;
         assert lib.hasInfix "-connect 175.110.121.112:443" on.programs.ssh.extraConfig;
         assert lib.hasInfix "User nix-ssh" on.programs.ssh.extraConfig;
