@@ -57,6 +57,7 @@ in
   };
 
   config = lib.mkIf (cfg.keys != null) {
+    nix.distributedBuilds = true;
     nix.buildMachines = [
       {
         hostName = alias;
@@ -64,7 +65,7 @@ in
         systems = [ "x86_64-linux" ];
         maxJobs = 16;
         speedFactor = 4;
-        # No kvm or nixos-test: the guest has no nested virtualisation.
+        # No kvm or nixos-test: the guest has no nested virtualisation (nl1-vm4 runs on a bare-metal hypervisor with virtualisation = none).
         supportedFeatures = [ "big-parallel" "benchmark" ];
       }
     ];
@@ -73,10 +74,15 @@ in
       builders-use-substitutes = true;
       extra-substituters = [ "ssh-ng://${alias}" ];
       extra-trusted-public-keys = [ cfg.keys.cacheKey ];
+      fallback = true;
+      connect-timeout = 10;
     };
 
     # root's nix-daemon reads /etc/ssh/ssh_config. -verify_return_error makes
     # a bad server cert fatal; the CA bundle is the system one.
+    # openssl s_client has no connect timeout; we wrap the connect phase in timeout(1).
+    # The whole session must not be killed, so timeout only guards the connect.
+    # ssh's ConnectTimeout and ServerAlive* handle the rest.
     programs.ssh.extraConfig = ''
 
       # nl1 build server, SSH inside TLS (see machines/jester/nl1-builder.nix).
@@ -87,11 +93,13 @@ in
         IdentitiesOnly yes
         IdentityAgent none
         IdentityFile ${dir}/ssh_ed25519
+        BatchMode yes
         # -quiet implies -ign_eof; -no_ign_eof makes s_client exit when ssh closes, else nix hangs.
-        ProxyCommand ${lib.getExe pkgs.openssl} s_client -quiet -no_ign_eof -verify_return_error -verify_hostname ${sni} -servername ${sni} -CAfile ${config.security.pki.caBundle} -connect ${address}:443
+        # timeout 10 wraps only the TCP/TLS connect; once connected, s_client runs without timeout.
+        ProxyCommand ${lib.getExe pkgs.coreutils}/bin/timeout 10 ${lib.getExe pkgs.openssl} s_client -quiet -no_ign_eof -verify_return_error -verify_hostname ${sni} -servername ${sni} -CAfile ${config.security.pki.caBundle} -connect ${address}:443
         ServerAliveInterval 15
-        ServerAliveCountMax 2
-        ConnectTimeout 30
+        ServerAliveCountMax 3
+        ConnectTimeout 10
     '';
 
     programs.ssh.knownHosts.${alias} = {
