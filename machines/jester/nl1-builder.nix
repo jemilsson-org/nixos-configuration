@@ -87,7 +87,8 @@ in
         IdentitiesOnly yes
         IdentityAgent none
         IdentityFile ${dir}/ssh_ed25519
-        ProxyCommand ${lib.getExe pkgs.openssl} s_client -quiet -verify_return_error -verify_hostname ${sni} -servername ${sni} -CAfile ${config.security.pki.caBundle} -connect ${address}:443
+        # -quiet implies -ign_eof; -no_ign_eof makes s_client exit when ssh closes, else nix hangs.
+        ProxyCommand ${lib.getExe pkgs.openssl} s_client -quiet -no_ign_eof -verify_return_error -verify_hostname ${sni} -servername ${sni} -CAfile ${config.security.pki.caBundle} -connect ${address}:443
         ServerAliveInterval 15
         ServerAliveCountMax 2
         ConnectTimeout 30
