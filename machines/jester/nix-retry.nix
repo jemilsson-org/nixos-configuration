@@ -1,9 +1,8 @@
 # Transparent retry wrappers for `nix` (build / flake check) and `nixos-rebuild`
 # (switch / boot / test / build / ...).
 #
-# jester offloads ALL builds to a remote builder (closure.build's Fly.io
-# gateway; previously also somchai, an AWS spot builder on a Stockholm<->
-# Bangkok link). The long-haul ssh-ng mux drops mid-build and nix has NO
+# jester offloads builds to a remote builder (nl1-builder; previously
+# closure.build's Fly.io gateway and somchai, an AWS spot builder). The long-haul ssh-ng mux drops mid-build and nix has NO
 # built-in retry, so two transient failure classes crash builds outright:
 #   1. Mid-build mux drop: a TCP drop on the persistent master EPIPEs every
 #      multiplexed channel at once ("error: writing to file: Broken pipe" /

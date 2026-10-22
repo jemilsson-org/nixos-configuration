@@ -1,4 +1,4 @@
-{ config, lib, pkgs, stdenv, hyprland, nix-build-router, ... }:
+{ config, lib, pkgs, stdenv, hyprland, ... }:
 let
   #containers = import ./containers/containers.nix { pkgs = pkgs; config = config; stdenv = stdenv; };
   #cardano-node = removed - no longer needed
@@ -1027,23 +1027,6 @@ in
 
     nix-tcp-proxy
 
-    # Opt-in sizing path: the closure-build-daemon unix socket is the BUILD STORE.
-    # Eval is local (--eval-store auto); the build op (BuildDerivation, op36) goes
-    # to the daemon, which peeks the inline derivation, classifies its weight, and
-    # signals the gateway so it provisions a VM sized to the build. The daemon then
-    # proxies the build to the gateway-provisioned builder.
-    # NO --builders / --max-jobs 0 here: those would shunt the build op to a
-    # separate ssh-ng builder, bypassing the daemon's peek (always Medium + the
-    # op31 peek-then-stop deadlock). The daemon IS the builder via its gateway proxy.
-    # Default builds still use the fast ssh-ng :2222 path via nix.buildMachines.
-    # PREREQUISITE: GATEWAY_CLIENT_WEIGHT_BYTE=1 set on closure-build-gateway (done).
-    (writeShellScriptBin "nix-sized" ''
-      exec nix build \
-        --eval-store auto \
-        --store "unix:///run/closure-build-daemon/closure-build.sock" \
-        "$@"
-    '')
-
     #devenv
 
 
@@ -1239,52 +1222,6 @@ in
   # gpg-agent SSH emulation has been retired — fafnir-openpgp serves
   # the YubiKey auth subkey directly on its own ssh-agent socket via
   # scdaemon passthrough, and fafnir's main agent forwards to it.
-  programs.ssh.extraConfig = ''
-
-    Host eu.nixbuild.net
-      User root
-      PubkeyAcceptedKeyTypes ssh-ed25519
-      IdentitiesOnly yes
-      IdentityAgent none
-      IdentityFile /etc/ssh/ssh_host_ed25519_key
-      ServerAliveInterval 60
-
-    # closure.build remote builder via Fly.io gateway.
-    # Port 2222 is encoded here because nix.buildMachines has no port field;
-    # the alias "closure-build" is used as hostName in buildMachines.
-    # Private key lives at /root/.ssh/closure_build_client (mode 0600, owner root),
-    # outside the Nix store (world-readable). Key was placed there via:
-    #   sudo install -m600 -o root -g root <repo>/closure_build_client /root/.ssh/closure_build_client
-    # This must be re-run manually after a fresh checkout; it is NOT automated
-    # via an activation script because the source path is outside the NixOS config.
-    # closure-build-1..4: same gateway under distinct names. Nix's build-remote
-    # holds one upload lock per store URI string (build-remote.cc,
-    # "<uri>.upload-lock"), so one alias serialises every input upload; four
-    # aliases allow four concurrent uploads.
-    Host closure-build closure-build-1 closure-build-2 closure-build-3 closure-build-4
-      HostName closure-build-gateway.fly.dev
-      Port 2222
-      User builder
-      IdentitiesOnly yes
-      IdentityAgent none
-      IdentityFile /root/.ssh/closure_build_client
-      StrictHostKeyChecking yes
-      # 15s: deployed builder sshd reaps idle sessions at ClientAliveInterval
-      # 10s x3; client keepalives must arrive inside that 30s window or
-      # inter-derivation stalls kill the session (Broken pipe mid-upload).
-      # CountMax 2 (30s total): also bounds how long a dead ControlMaster
-      # goes undetected, so a wedged TCP session (master survives but the
-      # peer is gone) gets torn down instead of hanging every subsequent
-      # multiplexed ssh-ng call until the control socket is deleted by hand.
-      ServerAliveInterval 15
-      ServerAliveCountMax 2
-      ConnectTimeout 30
-      # ControlMaster disabled: ~50 concurrent nix build-remote sessions
-      # multiplexed over 1-2 TCP connections head-of-line block each other
-      # on a lossy path (2,310 retransmits, 34.8k out-of-order packets,
-      # cwnd 4); builds stalled for 10+ min to hours.
-      ControlMaster no
-  '';
 
   # Prevent nix-daemon crash on boot: Settings static initializer dereferences
   # HOME before nscd is ready. Setting HOME explicitly avoids the race.
@@ -1297,9 +1234,8 @@ in
   # compile memory can still push the session into MemoryHigh throttling.
   # Halved from 8 to reduce resource pressure; remote builders do the heavy lifting.
   nix.settings.cores = 4;
-  # closure-build provisions a fresh Fly VM per build (cold start); keep this
-  # generous so nix-daemon doesn't yank the SSH handshake before it's up.
-  nix.settings.connect-timeout = 360;
+  # Matches nl1-builder ssh ConnectTimeout (nl1-builder.nix).
+  nix.settings.connect-timeout = 10;
   # Buffer for NAR downloads from remote builder / S3 cache.
   # 256 MiB: large enough to stream the biggest store paths (compiled APK,
   # BoringSSL .a) without hitting "download buffer is full", but small enough
@@ -1342,133 +1278,12 @@ in
   # this, glibc inside the sandbox uses RFC 3484 default precedence (v6
   # preferred), and big VSIX/etc fetches over a slow IPv6 path crawl.
   nix.settings.extra-sandbox-paths = [ "/etc/gai.conf" ];
-  # Tigris-backed paths first: the datapath goes through Tigris whenever it can
-  # (gateway-off-datapath doctrine); cachix is the fallback.
   nix.settings.substituters = lib.mkAfter [
-    # delta-proxy (patch-only local-base reconstruction): resolves base from local
-    # nix store via nix-store --dump, fetches only the patch from Tigris — cheapest path.
-    # Falls back to :8765 (full castore reconstruction) on cache miss.
-    "http://localhost:8766"
-    # cache-daemon: full castore/NAR reconstruction from Tigris. Fallback if no local base.
-    "http://localhost:8765"
     # Prebuilt upstream Hyprland (jester runs the hyprwm/Hyprland flake build).
     "https://hyprland.cachix.org"
   ];
 
-  # closure-build-daemon: client-side sizing daemon for the closure.build gateway.
-  # Classifies build weight and forwards sizing hints to the gateway so it can
-  # provision appropriately-sized VMs. The socket is exposed at
-  # /run/closure-build-daemon/closure-build.sock for the nix-sized wrapper below.
-  #
-  # MANUAL STEP (run once after switch, requires sudo):
-  #   sudo install -m600 -o root -g root <key-source> /root/.ssh/closure_build_client
-  # (same key used for ssh-ng :2222; no new credential needed if already placed)
-  #
-  # NOTE: Set GATEWAY_CLIENT_WEIGHT_BYTE=1 on the closure-build-gateway Fly app
-  # BEFORE using nix-sized, otherwise sizing sessions corrupt the gateway protocol.
-  systemd.services.closure-build-daemon = {
-    description = "closure.build client sizing daemon";
-    wantedBy = [ "multi-user.target" ];
-    after = [ "network-online.target" ];
-    wants = [ "network-online.target" ];
-    serviceConfig = {
-      ExecStart = "${nix-build-router.packages.x86_64-linux.client-daemon}/bin/closure-build-daemon";
-      Restart = "always";
-      RestartSec = "5s";
-      RuntimeDirectory = "closure-build-daemon";
-      # 0750 + group-owned socket (0660) so the unprivileged nix-sized wrapper
-      # can connect. Trust boundary: members of `users` can dispatch remote
-      # builds with root's gateway key — acceptable on this single-user box.
-      RuntimeDirectoryMode = "0750";
-      Group = "users";
-      # Key delivered via systemd credentials: loaded as root BEFORE the mount
-      # namespace is set up, then exposed read-only in $CREDENTIALS_DIRECTORY
-      # (/run/credentials/<unit>). This survives ProtectHome=true, which masks
-      # /root with a tmpfs and would otherwise hide the key (ReadOnlyPaths does
-      # not reliably re-expose a single file under a ProtectHome tmpfs).
-      LoadCredential = [ "clientkey:/root/.ssh/closure_build_client" ];
-      Environment = [
-        "CLOSURE_BUILD_CLIENT_KEY=/run/credentials/closure-build-daemon.service/clientkey"
-        "CLOSURE_BUILD_SOCKET=/run/closure-build-daemon/closure-build.sock"
-        "CLOSURE_BUILD_GATEWAY_HOST=closure-build-gateway.fly.dev"
-        "CLOSURE_BUILD_GATEWAY_PORT=443"
-        "CLIENT_DAEMON_SIZING=1"
-        "CLIENT_DAEMON_BUILD_ID=1"
-        "CLOSURE_BUILD_SOCKET_MODE=0660"
-        "CLOSURE_BUILD_SOCKET_GROUP=users"
-        "RUST_LOG=info"
-      ];
-      # Security profile matching cache-daemon / delta-proxy siblings.
-      NoNewPrivileges = true;
-      ProtectSystem = "strict";
-      ProtectHome = true;
-      PrivateTmp = true;
-      ReadWritePaths = [ "/run/closure-build-daemon" ];
-    };
-  };
-
-  # cache-daemon: local Nix binary-cache HTTP server reading castore from Tigris.
-  # Secrets (AWS read creds) live in /etc/cache-daemon-env — root-only, not in git.
-  # MANUAL STEP (run once after switch, requires sudo):
-  #   sudo tee /etc/cache-daemon-env <<'EOF'
-  #   AWS_ACCESS_KEY_ID=<TIGRIS_READ_KEY_ID>
-  #   AWS_SECRET_ACCESS_KEY=<TIGRIS_READ_SECRET>
-  #   EOF
-  #   sudo chmod 600 /etc/cache-daemon-env
-  systemd.services.cache-daemon = {
-    description = "Nix binary-cache daemon (castore/Tigris)";
-    wantedBy = [ "multi-user.target" ];
-    after = [ "network-online.target" ];
-    wants = [ "network-online.target" ];
-    serviceConfig = {
-      ExecStart = "${nix-build-router.packages.x86_64-linux.cache-daemon}/bin/cache-daemon";
-      Restart = "always";
-      RestartSec = "5s";
-      EnvironmentFile = "/etc/cache-daemon-env";
-      Environment = [
-        "CACHE_BIND=127.0.0.1:8765"
-        "AWS_BUCKET=closure-build-cache"
-        "AWS_ENDPOINT_URL=https://fly.storage.tigris.dev"
-        "AWS_REGION=auto"
-      ];
-      # Security hardening (no DynamicUser — needs EnvironmentFile as root)
-      NoNewPrivileges = true;
-      ProtectSystem = "strict";
-      ProtectHome = true;
-      PrivateTmp = true;
-    };
-  };
-  # delta-proxy: patch-only local-base NAR reconstruction from Tigris deltas.
-  # Reuses /etc/cache-daemon-env (same AWS read creds); no new secrets needed.
-  systemd.services.delta-proxy = {
-    description = "Nix delta-proxy (patch-only local-base reconstruction from Tigris)";
-    wantedBy = [ "multi-user.target" ];
-    after = [ "network-online.target" ];
-    wants = [ "network-online.target" ];
-    # nix-store must be on PATH: the base resolver shells out to `nix-store
-    # --dump`; without it every request silently falls back to the full NAR.
-    path = [ config.nix.package ];
-    serviceConfig = {
-      ExecStart = "${nix-build-router.packages.x86_64-linux.delta-proxy}/bin/delta-proxy";
-      Restart = "always";
-      RestartSec = "5s";
-      EnvironmentFile = "/etc/cache-daemon-env";
-      Environment = [
-        "DELTA_PROXY_PORT=8766"
-        "DELTA_PROXY_UPSTREAM=http://localhost:8765"
-        "AWS_BUCKET=closure-build-cache"
-        "AWS_ENDPOINT_URL=https://fly.storage.tigris.dev"
-        "AWS_REGION=auto"
-      ];
-      NoNewPrivileges = true;
-      ProtectSystem = "strict";
-      ProtectHome = true;
-      PrivateTmp = true;
-    };
-  };
-
   nix.settings.trusted-public-keys = lib.mkAfter [
-    "closure-build-cache-1:ZU3pD3lmJ+xSdqrPJOJOUsVYiaHRcWk+A7+fX3kjS8c="
     "hyprland.cachix.org-1:a7pgxzMz7+chwVL3/pzj6jIBMioiJM7ypFP8PwtkuGc="
   ];
 
@@ -1479,66 +1294,6 @@ in
   # hyprctl binary collision in environment.systemPackages.
   programs.hyprland.package = lib.mkForce hyprland.packages.${pkgs.system}.hyprland;
   programs.hyprland.portalPackage = lib.mkForce hyprland.packages.${pkgs.system}.xdg-desktop-portal-hyprland;
-
-  nix.buildMachines = [
-    # nixbuild.net remote builder temporarily disabled; closure.build below is
-    # the active remote builder.
-    # {
-    #   # nixbuild.net: managed remote builder, used as overflow/fallback.
-    #   # speedFactor 1 (« closure.build's 10) so nix prefers closure.build and
-    #   # only dispatches here when it's full or unreachable.
-    #   # Auth: jester's host ed25519 key must be registered on the nixbuild.net
-    #   # account (https://docs.nixbuild.net -> SSH keys). No "kvm"/"nixos-test"
-    #   # feature: nixbuild.net doesn't run NixOS VM tests.
-    #   hostName = "eu.nixbuild.net";
-    #   sshUser = "root";
-    #   sshKey = "/etc/ssh/ssh_host_ed25519_key";
-    #   systems = [ "x86_64-linux" ];
-    #   maxJobs = 100;
-    #   speedFactor = 1;
-    #   supportedFeatures = [ "big-parallel" "benchmark" ];
-    #   protocol = "ssh-ng";
-    # }
-  ]
-  # Four entries, one per SSH alias, so uploads run four at a time instead of
-  # queueing on one per-URI upload lock. No ?compress=true: measured slower
-  # (566 MB NAR: 74 s raw vs 129 s with ssh -C on this CPU-loaded host).
-  ++ map (n:
-      {
-        # closure.build remote builder via Fly.io gateway (ssh-ng over port 2222).
-        # "closure-build" resolves via the Host alias in programs.ssh.extraConfig above.
-        # The gateway provisions on-demand Fly performance-4x machines (x86_64-linux).
-        # highest priority: prefer closure.build over nixbuild(1) when both are configured.
-        # Trade-off: closure.build provisions a fresh VM per build (~9-17s cold start);
-        # top priority means every eligible build pays that cold-start latency —
-        # this is the user's explicit choice.
-        hostName = "closure-build-${toString n}";
-        sshUser = "builder";
-        sshKey = "/root/.ssh/closure_build_client";
-        systems = [ "x86_64-linux" ];
-        # maxJobs = parallel nix-daemon connections jester opens to the gateway, and
-        # EACH connection triggers one gateway provision. nix reuses each connection
-        # across many derivations, so total provisions ≈ maxJobs, not the derivation
-        # count. Must stay <= GATEWAY_MAX_CONCURRENT on closure-build-gateway (64),
-        # or excess connections queue for slots.
-        maxJobs = 8; # x4 aliases = 32 parallel ephemeral builders (1 VM per job, scale-to-zero)
-        speedFactor = 10; # highest priority: prefer closure.build over nixbuild(1)
-        # kvm intentionally absent: the Fly builder VM does not expose /dev/kvm;
-        # advertising it caused routing failures for kvm-requiring derivations.
-        supportedFeatures = [ "nixos-test" "benchmark" "big-parallel" ];
-        protocol = "ssh-ng";
-      }
-    ) [ 1 2 3 4 ];
-  programs.ssh.knownHosts."closure-build-gateway" = {
-    # Host key for closure-build-gateway.fly.dev:2222 (closure.build Fly.io gateway).
-    # Obtained via: ssh-keyscan -p 2222 closure-build-gateway.fly.dev
-    hostNames = [ "[closure-build-gateway.fly.dev]:2222" ];
-    publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILiy2Sjb0ZBEXv9tS6LLJ59IZ6bhpKcXw9RB522nC5yJ";
-  };
-  programs.ssh.knownHosts.nixbuild = {
-    hostNames = [ "eu.nixbuild.net" ];
-    publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPIQCZc54poJ8vqawd8TraNryQeJnvH1eLpIDgbiqymM";
-  };
 
   # nl1 build server (nl1-builder.nix): nl1-vm4 behind nl1:443 (TLS SNI routing, SSH key auth).
   services.nl1-builder.keys = {

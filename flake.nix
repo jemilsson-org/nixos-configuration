@@ -33,13 +33,6 @@
     hyprland = {
       url = "github:hyprwm/Hyprland";
     };
-    nix-build-router = {
-      url = "git+ssh://git@github.com/jemilsson-org/closure-build";
-      inputs.nixpkgs.follows = "nixpkgs-unstable";
-      # microvm → spectrum → snix (git.snix.dev) is unreachable and unused here;
-      # drop it so nixos-rebuild doesn't need to fetch it.
-      inputs.microvm.inputs.spectrum.follows = "";
-    };
     # bambu-studio = {
     #   url = "github:zhaofengli/nixpkgs/bambu-studio";
     # };
@@ -59,7 +52,7 @@
     */
   };
 
-  outputs = { self, nixpkgs, nixpkgs-unstable, nixpkgs-jemilsson, fafnir, syna, claude-code, hyprland, nix-build-router, nixos-wsl }: # , agenix, agenix-rekey }: # bambu-studio,
+  outputs = { self, nixpkgs, nixpkgs-unstable, nixpkgs-jemilsson, fafnir, syna, claude-code, hyprland, nixos-wsl }: # , agenix, agenix-rekey }: # bambu-studio,
     let
       system = "x86_64-linux";
       overlay-unstable = final: prev: {
@@ -151,6 +144,7 @@
         assert on.nix.settings.builders-use-substitutes;
         assert on.nix.settings.fallback;
         assert builtins.length (nl1 on) == 1;
+        assert hosts jester.config == [ "nl1-builder" ];
         assert m.protocol == "ssh-ng";
         assert m.systems == [ "x86_64-linux" ];
         assert m.maxJobs == 16 && m.speedFactor == 4;
@@ -204,7 +198,7 @@
         };
 
         jester = nixpkgs.lib.nixosSystem {
-          specialArgs = { inherit hyprland nix-build-router; };
+          specialArgs = { inherit hyprland; };
           modules = [
             ({ config, pkgs, ... }: { nixpkgs.hostPlatform = system; nixpkgs.overlays = [ overlay-unstable overlay-jemilsson ]; })
             fafnir.nixosModules.default

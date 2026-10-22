@@ -71,21 +71,6 @@
     },
     "crane_2": {
       "locked": {
-        "lastModified": 1785782307,
-        "narHash": "sha256-MPaRdVkf6zZP5fCPxYCi8Dr4pZzgmXzg8T9nVEbp3Mw=",
-        "owner": "ipetkov",
-        "repo": "crane",
-        "rev": "2c71e194474d13de031d729b729c968ddbe3507f",
-        "type": "github"
-      },
-      "original": {
-        "owner": "ipetkov",
-        "repo": "crane",
-        "type": "github"
-      }
-    },
-    "crane_3": {
-      "locked": {
         "lastModified": 1777830388,
         "narHash": "sha256-2uoQAqUk2H0ijQtGiWAyNeQYGYc6yfAcRRLlJAz4Gp8=",
         "owner": "ipetkov",
@@ -554,50 +539,6 @@
         "type": "github"
       }
     },
-    "microvm": {
-      "inputs": {
-        "nixpkgs": [
-          "nix-build-router",
-          "nixpkgs"
-        ],
-        "spectrum": []
-      },
-      "locked": {
-        "lastModified": 1786300091,
-        "narHash": "sha256-4UFJOVGpaYtHW5yasSv80MaJxTBYdk2zyf3jhKtt0wA=",
-        "owner": "astro",
-        "repo": "microvm.nix",
-        "rev": "71beea0076cd46dafcee97a5a2e7d00cbba5bd2f",
-        "type": "github"
-      },
-      "original": {
-        "owner": "astro",
-        "repo": "microvm.nix",
-        "type": "github"
-      }
-    },
-    "nix-build-router": {
-      "inputs": {
-        "crane": "crane_2",
-        "microvm": "microvm",
-        "nixpkgs": [
-          "nixpkgs-unstable"
-        ]
-      },
-      "locked": {
-        "lastModified": 1789612664,
-        "narHash": "sha256-qAhj1BSoDLY1j1lYDVj9i1dexMOELZSxf4uF+T044sc=",
-        "ref": "refs/heads/master",
-        "rev": "07ce065a5f7e3bc17940a4fe9be4731454e40758",
-        "revCount": 421,
-        "type": "git",
-        "url": "ssh://git@github.com/jemilsson-org/closure-build"
-      },
-      "original": {
-        "type": "git",
-        "url": "ssh://git@github.com/jemilsson-org/closure-build"
-      }
-    },
     "nixos-wsl": {
       "inputs": {
         "flake-compat": "flake-compat_2",
@@ -718,7 +659,6 @@
         "claude-code": "claude-code",
         "fafnir": "fafnir",
         "hyprland": "hyprland",
-        "nix-build-router": "nix-build-router",
         "nixos-wsl": "nixos-wsl",
         "nixpkgs": "nixpkgs_2",
         "nixpkgs-jemilsson": "nixpkgs-jemilsson",
@@ -766,7 +706,7 @@
     },
     "syna": {
       "inputs": {
-        "crane": "crane_3",
+        "crane": "crane_2",
         "fenix": "fenix",
         "flake-utils": "flake-utils_2",
         "nixpkgs": [
