@@ -202,3 +202,33 @@ constrained to sum to 1. 23 usable patches, 5.2% mean residual. Redo after
 any further board or camera change; the AGC step-size patch and the 1.3
 contrast default in camera.nix were tuned on the old board and are the next
 knobs if exposure hunts or contrast looks wrong.
+
+## jester: ai.slice stays loose, jobs get reparented instead (2026-10-22)
+
+Do not tighten `ai.slice` MemoryHigh (16G) or MemoryMax (18G). Memory pressure
+on the AI slices is contained by moving work into the child `ai-jobs.slice`
+(MemoryHigh 10G, MemoryMax 12G), not by shrinking the parent.
+
+Reason: systemd-oomd killed 107 claude sessions in 7 days to 2026-10-20. The
+kills came from the caps working as designed. Throttling at MemoryHigh is itself
+reclaim pressure, so oomd's 40% pressure rule fired on healthy throttling. The
+fix was "cap, don't kill": per-slice `zz-oomd.conf` drop-ins set
+`ManagedOOMMemoryPressure=auto` on `ai` and `ai-jobs`, overriding the
+`ManagedOOMMemoryPressure=kill` that `systemd.oomd.enableUserSlices` writes to
+`slice.d/overrides.conf`. Tightening the parent re-creates the same pressure, so
+it is off the table.
+
+Containment mechanism: a spawner puts its background jobs in the child slice
+with `systemd-run --user --scope --slice=ai-jobs.slice`. The claude wrapper does
+this for Bash commands, and `venice-subscription-api` now does it for its
+background jobs instead of letting them inherit the gateway's parent budget.
+`venice-api.service` itself stays pinned to `ai.slice` via the `ai-slice.conf`
+drop-in list; that is deliberate, since the gateway is interactive.
+
+Guard: `nix build .#checks.x86_64-linux.jester-slice-invariants`, wired into
+`flake.nix`. It evaluates the built jester config and fails if `ai-jobs`
+MemoryHigh, MemoryMax or CPUWeight stops being strictly below `ai`'s, if either
+slice drops MemorySwapMax, or if a `zz-oomd.conf` drop-in stops saying
+`auto`. Size strings go through a parser that throws on anything it cannot read,
+so a typo fails loudly rather than comparing as zero. Pure eval plus one trivial
+derivation: no VM, no network, no root.

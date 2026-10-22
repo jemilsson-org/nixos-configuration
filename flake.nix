@@ -170,6 +170,71 @@
           on = hosts on;
           proxyCommand = lib.filter (l: lib.hasInfix "ProxyCommand" l) (lib.splitString "\n" on.programs.ssh.extraConfig);
         });
+
+      # Guards the jester cgroup slice design (machines/jester/configuration.nix
+      # "cap, don't kill"): ai-jobs.slice stays strictly below its parent
+      # ai.slice on memory and CPU weight, both bound swap, and oomd pressure
+      # killing stays off for both. systemd-oomd killed 107 claude sessions in
+      # 7 days to 2026-10-20 before the drop-ins turned it off, so the numbers
+      # here are load-bearing. Pure eval of the built config plus a read of the
+      # two generated drop-ins; no VM, no network, no root.
+      # nix build .#checks.x86_64-linux.jester-slice-invariants
+      sliceEval =
+        let
+          lib = nixpkgs.lib;
+          cfg = self.nixosConfigurations.jester.config;
+          ai = cfg.systemd.user.slices.ai.sliceConfig;
+          jobs = cfg.systemd.user.slices.ai-jobs.sliceConfig;
+          # systemd sizes: a byte count with an optional K/M/G/T suffix, which
+          # may carry a trailing i and/or B. Anything else throws, so an
+          # unparsable value fails the check instead of comparing as 0.
+          suffixes = { "" = 1; K = 1024; M = 1048576; G = 1073741824; T = 1099511627776; };
+          bytes = slice: attr: v:
+            let m = builtins.match "([0-9]+)([KMGT]?)i?B?" (toString v);
+            in if m == null then
+              throw "jester-slice-invariants: ${slice}.slice ${attr} = ${toString v} is not a parsable systemd size"
+            else lib.toInt (builtins.elemAt m 0) * suffixes.${builtins.elemAt m 1};
+          below = attr:
+            lib.assertMsg (bytes "ai-jobs" attr jobs.${attr} < bytes "ai" attr ai.${attr})
+              "jester-slice-invariants: ai-jobs.slice ${attr} (${toString jobs.${attr}}) must be strictly below ai.slice ${attr} (${toString ai.${attr}})";
+          swapBounded = slice: s:
+            lib.assertMsg ((s.MemorySwapMax or null) != null && toString s.MemorySwapMax != "")
+              "jester-slice-invariants: ${slice}.slice must set MemorySwapMax, got ${toString (s.MemorySwapMax or "<unset>")}";
+          # oomd off is not in sliceConfig: systemd.oomd.enableUserSlices ships
+          # slice.d/overrides.conf with ManagedOOMMemoryPressure=kill, and the
+          # jester config overrides it with its own zz-oomd.conf drop-in
+          # packages (writeTextDir, so .name is the file name).
+          dropins = lib.filter (p: p.name == "zz-oomd.conf") cfg.systemd.packages;
+        in
+        assert below "MemoryHigh";
+        assert below "MemoryMax";
+        assert swapBounded "ai" ai;
+        assert swapBounded "ai-jobs" jobs;
+        assert lib.assertMsg (jobs.CPUWeight < ai.CPUWeight)
+          "jester-slice-invariants: ai-jobs.slice CPUWeight (${toString jobs.CPUWeight}) must be strictly below ai.slice CPUWeight (${toString ai.CPUWeight})";
+        assert lib.assertMsg cfg.systemd.oomd.enableUserSlices
+          "jester-slice-invariants: systemd.oomd.enableUserSlices is off, so the zz-oomd.conf drop-ins no longer override anything";
+        assert lib.assertMsg (builtins.length dropins == 2)
+          "jester-slice-invariants: expected 2 zz-oomd.conf drop-in packages, found ${toString (builtins.length dropins)}";
+        pkgs.runCommand "jester-slice-invariants" { } ''
+          for s in ai ai-jobs; do
+            f=
+            for p in ${lib.escapeShellArgs (map toString dropins)}; do
+              c="$p/lib/systemd/user/$s.slice.d/zz-oomd.conf"
+              [ -e "$c" ] && f="$c"
+            done
+            if [ -z "$f" ]; then
+              echo "jester-slice-invariants: no zz-oomd.conf drop-in for $s.slice" >&2
+              exit 1
+            fi
+            if ! grep -qx 'ManagedOOMMemoryPressure=auto' "$f"; then
+              echo "jester-slice-invariants: $s.slice drop-in does not set ManagedOOMMemoryPressure=auto, oomd pressure killing is back on:" >&2
+              cat "$f" >&2
+              exit 1
+            fi
+          done
+          touch $out
+        '';
     in
     {
       overlays.default = overlay-jemilsson;
@@ -257,6 +322,8 @@
         pkgs.callPackage ./machines/jester/presence-lock-test.nix { };
 
       checks.x86_64-linux.jester-nl1-builder-eval = nl1Eval;
+
+      checks.x86_64-linux.jester-slice-invariants = sliceEval;
 
     };
 }
