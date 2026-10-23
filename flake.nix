@@ -147,12 +147,12 @@
         assert hosts jester.config == [ "nl1-builder" ];
         assert m.protocol == "ssh-ng";
         assert m.systems == [ "x86_64-linux" ];
-        assert m.maxJobs == 16 && m.speedFactor == 4;
+        assert m.maxJobs == 4 && m.speedFactor == 4;
         assert m.supportedFeatures == [ "big-parallel" "benchmark" ];
         assert sort (hosts on) == sort (hosts off ++ [ "nl1-builder" ]);
-        assert builtins.elem "ssh-ng://nl1-builder" (subs on);
+        assert !(builtins.elem "ssh-ng://nl1-builder" (subs on));
         assert builtins.elem dummyCache on.nix.settings.extra-trusted-public-keys;
-        assert lib.hasInfix "/bin/openssl s_client -quiet -no_ign_eof -verify_return_error" on.programs.ssh.extraConfig;
+        assert lib.hasInfix "/bin/socat - OPENSSL:" on.programs.ssh.extraConfig;
         assert !(lib.hasInfix "timeout 10" on.programs.ssh.extraConfig);
         assert lib.hasInfix "-verify_hostname builder.decentgaming.io -servername builder.decentgaming.io" on.programs.ssh.extraConfig;
         assert lib.hasInfix "-connect 175.110.121.112:443" on.programs.ssh.extraConfig;
