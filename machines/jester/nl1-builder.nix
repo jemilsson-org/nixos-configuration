@@ -12,22 +12,20 @@
 # desynchronised the byte stream under sustained concurrent load: broken pipes,
 # corrupted connections and "Bad packet length" with a random length each time.
 # nl1's nginx stream routes SNI builder.decentgaming.io to a TLS terminator
-# that presents the public ACME cert and REQUIRES a client cert from a private
-# CA, then forwards plain TCP to the builder's sshd (user
-# nix-ssh only, nix.sshServe). The laptop never talks to nl1's own sshd.
+# that presents the public ACME cert, then forwards plain TCP to the builder's
+# sshd (user nix-ssh only, nix.sshServe). The laptop never talks to nl1's own
+# sshd. TLS is a proxy only; auth is SSH key only.
 #
 # Secrets live on the laptop only, outside the repo and the store, root-only:
 #   /etc/nix/nl1-builder/ssh_ed25519   SSH key (builder authorizes its pubkey)
-#   /etc/nix/nl1-builder/client.key    TLS client key
-#   /etc/nix/nl1-builder/client.crt    TLS client cert, signed by the private CA
-# Create them with `nix run .#nl1-builder-keygen`; it also explains signing
-# the CSR (the CA key stays on the admin's machine).
+# Create it with `nix run .#nl1-builder-keygen`; it prints the public half.
 #
 # Activating (after the guest has booted once):
 #   1. Builder: read the public half of its store signing key
-#      ("nl1-vm4-1:BASE64") -> `keys.cacheKey`.
+#      ("nl1-builder:BASE64", from `nix-cache-signer --print-public-key nl1-builder`) -> `keys.cacheKey`.
 #   2. Builder: read its sshd host key (/etc/ssh/ssh_host_ed25519_key.pub on
 #      the guest) -> `keys.hostKey` ("ssh-ed25519 AAAA...").
+#      Pinned in decent-nixos-configuration inventory.builder.hostKey: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJnEerjtjdPTVwgyXMiFdNInYIoULUlIL5qP2rZuEotF
 #   3. Set `services.nl1-builder.keys` in machines/jester/configuration.nix
 #      and rebuild. Check: `sudo ssh nl1-builder nix-store --version`.
 let
@@ -43,7 +41,7 @@ in
       options = {
         cacheKey = lib.mkOption {
           type = lib.types.str;
-          example = "nl1-vm4-1:AAAA...=";
+          example = "nl1-builder:AAAA...=";
           description = "Public signing key of the builder's binary cache.";
         };
         hostKey = lib.mkOption {
@@ -96,7 +94,7 @@ in
         IdentitiesOnly yes
         IdentityAgent none
         IdentityFile ${dir}/ssh_ed25519
-        ProxyCommand ${pkgs.socat}/bin/socat - OPENSSL:${address}:443,snihost=${sni},commonname=${sni},verify=1,cafile=${config.security.pki.caBundle},cert=${dir}/client.crt,key=${dir}/client.key
+        ProxyCommand ${pkgs.socat}/bin/socat - OPENSSL:${address}:443,snihost=${sni},commonname=${sni},verify=1,cafile=${config.security.pki.caBundle}
         ServerAliveInterval 15
         ServerAliveCountMax 2
         ConnectTimeout 30

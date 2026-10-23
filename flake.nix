@@ -161,6 +161,8 @@
         assert lib.hasInfix "ServerAliveInterval 15" on.programs.ssh.extraConfig;
         assert lib.hasInfix "ServerAliveCountMax 2" on.programs.ssh.extraConfig;
         assert lib.hasInfix "ConnectTimeout 30" on.programs.ssh.extraConfig;
+        assert !lib.hasInfix "-cert" on.programs.ssh.extraConfig;
+        assert !lib.hasInfix "-key" on.programs.ssh.extraConfig;
         assert on.programs.ssh.knownHosts.nl1-builder.publicKey == dummyHost;
         pkgs.writeText "jester-nl1-builder-eval" (builtins.toJSON {
           off = hosts off;
