@@ -67,7 +67,7 @@ in
         systems = [ "x86_64-linux" ];
         # 4, not 16: 16 concurrent copies saturated the tunnel and the builder.
         maxJobs = 4;
-        speedFactor = 4;
+        speedFactor = 20;
         # No kvm or nixos-test: the guest has no nested virtualisation.
         supportedFeatures = [ "big-parallel" "benchmark" ];
       }

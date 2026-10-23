@@ -147,7 +147,7 @@
         assert hosts jester.config == [ "nl1-builder" ];
         assert m.protocol == "ssh-ng";
         assert m.systems == [ "x86_64-linux" ];
-        assert m.maxJobs == 4 && m.speedFactor == 4;
+        assert m.maxJobs == 4 && m.speedFactor == 20;
         assert m.supportedFeatures == [ "big-parallel" "benchmark" ];
         assert sort (hosts on) == sort (hosts off ++ [ "nl1-builder" ]);
         assert !(builtins.elem "ssh-ng://nl1-builder" (subs on));
