@@ -65,8 +65,9 @@ in
         hostName = alias;
         protocol = "ssh-ng";
         systems = [ "x86_64-linux" ];
-        # 4, not 16: 16 concurrent copies saturated the tunnel and the builder.
-        maxJobs = 4;
+        # 16 matches the builder's max-jobs. 4 was a cap for the old openssl
+        # s_client tunnel, which broke under concurrent copies; socat does not.
+        maxJobs = 16;
         speedFactor = 20;
         # No kvm or nixos-test: the guest has no nested virtualisation.
         supportedFeatures = [ "big-parallel" "benchmark" ];
