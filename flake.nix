@@ -154,8 +154,8 @@
         assert builtins.elem dummyCache on.nix.settings.extra-trusted-public-keys;
         assert lib.hasInfix "/bin/socat - OPENSSL:" on.programs.ssh.extraConfig;
         assert !(lib.hasInfix "timeout 10" on.programs.ssh.extraConfig);
-        assert lib.hasInfix "-verify_hostname builder.decentgaming.io -servername builder.decentgaming.io" on.programs.ssh.extraConfig;
-        assert lib.hasInfix "-connect 175.110.121.112:443" on.programs.ssh.extraConfig;
+        assert lib.hasInfix "commonname=builder.decentgaming.io" on.programs.ssh.extraConfig;
+        assert lib.hasInfix "OPENSSL:175.110.121.112:443" on.programs.ssh.extraConfig;
         assert lib.hasInfix "User nix-ssh" on.programs.ssh.extraConfig;
         assert lib.hasInfix "IdentitiesOnly yes" on.programs.ssh.extraConfig;
         assert lib.hasInfix "BatchMode yes" on.programs.ssh.extraConfig;
