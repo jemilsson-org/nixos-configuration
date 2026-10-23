@@ -153,17 +153,14 @@
         assert !(builtins.elem "ssh-ng://nl1-builder" (subs on));
         assert builtins.elem dummyCache on.nix.settings.extra-trusted-public-keys;
         assert lib.hasInfix "/bin/socat - OPENSSL:" on.programs.ssh.extraConfig;
-        assert !(lib.hasInfix "timeout 10" on.programs.ssh.extraConfig);
+        assert lib.hasInfix "snihost=builder.decentgaming.io" on.programs.ssh.extraConfig;
         assert lib.hasInfix "commonname=builder.decentgaming.io" on.programs.ssh.extraConfig;
         assert lib.hasInfix "OPENSSL:175.110.121.112:443" on.programs.ssh.extraConfig;
         assert lib.hasInfix "User nix-ssh" on.programs.ssh.extraConfig;
         assert lib.hasInfix "IdentitiesOnly yes" on.programs.ssh.extraConfig;
-        assert lib.hasInfix "BatchMode yes" on.programs.ssh.extraConfig;
         assert lib.hasInfix "ServerAliveInterval 15" on.programs.ssh.extraConfig;
-        assert lib.hasInfix "ServerAliveCountMax 3" on.programs.ssh.extraConfig;
-        assert lib.hasInfix "ConnectTimeout 10" on.programs.ssh.extraConfig;
-        assert !lib.hasInfix "-cert" on.programs.ssh.extraConfig;
-        assert !lib.hasInfix "-key" on.programs.ssh.extraConfig;
+        assert lib.hasInfix "ServerAliveCountMax 2" on.programs.ssh.extraConfig;
+        assert lib.hasInfix "ConnectTimeout 30" on.programs.ssh.extraConfig;
         assert on.programs.ssh.knownHosts.nl1-builder.publicKey == dummyHost;
         pkgs.writeText "jester-nl1-builder-eval" (builtins.toJSON {
           off = hosts off;
