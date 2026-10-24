@@ -218,6 +218,10 @@ fix was "cap, don't kill": per-slice `zz-oomd.conf` drop-ins set
 `slice.d/overrides.conf`. Tightening the parent re-creates the same pressure, so
 it is off the table.
 
+Each claude Bash scope also carries its own cap (MemoryHigh 5G, MemoryMax
+8G, MemorySwapMax 1G, added 2026-10-24) so one heavy command cannot take the
+whole shared pool and stall every session's commands.
+
 Containment mechanism: a spawner puts its background jobs in the child slice
 with `systemd-run --user --scope --slice=ai-jobs.slice`. The claude wrapper does
 this for Bash commands, and `venice-subscription-api` now does it for its

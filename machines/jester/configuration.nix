@@ -995,11 +995,15 @@ in
       # Claude passes every hook, MCP server and Bash tool command to this
       # prefix as one string. Only Bash tool commands (they source a zsh shell
       # snapshot) go to ai-jobs.slice; hooks skip systemd-run's startup cost.
+      # Per-command caps, below the shared 10G pool: one runaway command
+      # (parallel nix evals, 2026-10-24) throttles or dies alone instead of
+      # starving every other session's commands.
       claudeJobPrefix = pkgs.writeShellScript "claude-job-prefix" ''
         case "$1" in
           *shell-snapshots/snapshot-*)
             exec ${pkgs.systemd}/bin/systemd-run --user --scope --quiet --collect \
-              --slice=ai-jobs.slice -- "''${SHELL:-/bin/sh}" -c "$1" ;;
+              --slice=ai-jobs.slice -p MemoryHigh=5G -p MemoryMax=8G \
+              -p MemorySwapMax=1G -- "''${SHELL:-/bin/sh}" -c "$1" ;;
         esac
         exec /bin/sh -c "$1"
       '';
