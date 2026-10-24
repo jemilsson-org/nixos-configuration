@@ -365,18 +365,19 @@ in
   # systemd.oomd.enableUserSlices ships slice.d/overrides.conf with
   # ManagedOOMMemoryPressure=kill on every slice, and the slice.d directory
   # outranks the slice's unit file. zz- sorts after overrides.conf.
-  # CPUQuota (2026-10-20): background caps total 8 of 12 threads (ai 4,
-  # nix-daemon 4) so the desktop keeps 4; throttles, never kills.
+  # CPU: no quota on ai.slice. A 400% quota shared by every session, LSP and
+  # job held CPU pressure at 85-94% and stalled all claudes while threads sat
+  # idle (2026-10-24). Weights alone give the desktop priority under contention.
+  # ai-jobs keeps a quota (8 of 12 threads) so jobs never take the whole box.
   systemd.user.slices.ai.sliceConfig = {
-    CPUQuota = "400%";
     CPUWeight = 50;
     IOWeight = 50;
-    MemoryHigh = "16G";
-    MemoryMax = "18G";
+    MemoryHigh = "20G"; # 16G stalled every claude at 17.2G used (2026-10-24)
+    MemoryMax = "22G";
     MemorySwapMax = "6G";
   };
   systemd.user.slices.ai-jobs.sliceConfig = {
-    CPUQuota = "300%";
+    CPUQuota = "800%";
     CPUWeight = 10;
     IOWeight = 10;
     MemoryHigh = "10G";
@@ -394,8 +395,13 @@ in
       [ "claude-api" "claude-intercept" "venice-api" "teleclaude" "muninn" ]
     ++ map (n: pkgs.writeTextDir "lib/systemd/user/${n}.slice.d/zz-oomd.conf"
       "[Slice]\nManagedOOMMemoryPressure=auto\n")
-      [ "ai" "ai-jobs" ]
-    ++ [ (pkgs.writeTextDir "lib/systemd/user/disk-cleanup.service.d/low-priority.conf"
+      [ "ai" "ai-jobs" "ai-jobs-" ]
+    ++ [
+      # Prefix drop-in: every per-session ai-jobs-p<pid>.slice inherits the
+      # same caps and CPU weight as ai-jobs.
+      (pkgs.writeTextDir "lib/systemd/user/ai-jobs-.slice.d/session.conf"
+        "[Slice]\nCPUWeight=100\nMemoryHigh=5G\nMemoryMax=8G\nMemorySwapMax=1G\n")
+      (pkgs.writeTextDir "lib/systemd/user/disk-cleanup.service.d/low-priority.conf"
       "[Service]\nCPUWeight=20\nIOWeight=20\nNice=10\n") ];
 
   # /tmp lives on the root fs and had accumulated 71G/18k entries: a nightly
@@ -994,16 +1000,24 @@ in
     (let
       # Claude passes every hook, MCP server and Bash tool command to this
       # prefix as one string. Only Bash tool commands (they source a zsh shell
-      # snapshot) go to ai-jobs.slice; hooks skip systemd-run's startup cost.
-      # Per-command caps, below the shared 10G pool: one runaway command
-      # (parallel nix evals, 2026-10-24) throttles or dies alone instead of
-      # starving every other session's commands.
+      # snapshot) get a scope; hooks skip systemd-run's startup cost.
+      # Each session's jobs run in ai-jobs-p<pid>.slice, named from claude's
+      # own run-p<pid> scope in /proc/self/cgroup, so one session's jobs
+      # throttle only that session (2026-10-24). Caps come from the
+      # ai-jobs-.slice.d drop-in, not per-command flags.
       claudeJobPrefix = pkgs.writeShellScript "claude-job-prefix" ''
         case "$1" in
           *shell-snapshots/snapshot-*)
+            cg="''$(head -n1 /proc/self/cgroup)"
+            case "$cg" in
+              */ai.slice/run-p*)
+                pid="''${cg#*run-p}"; pid="''${pid%%-*}"
+                slice="ai-jobs-p$pid.slice" ;;
+              *)
+                slice="ai-jobs.slice" ;;
+            esac
             exec ${pkgs.systemd}/bin/systemd-run --user --scope --quiet --collect \
-              --slice=ai-jobs.slice -p MemoryHigh=5G -p MemoryMax=8G \
-              -p MemorySwapMax=1G -- "''${SHELL:-/bin/sh}" -c "$1" ;;
+              --slice="''${slice}" -- "''${SHELL:-/bin/sh}" -c "$1" ;;
         esac
         exec /bin/sh -c "$1"
       '';

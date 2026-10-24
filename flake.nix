@@ -213,10 +213,10 @@
           "jester-slice-invariants: ai-jobs.slice CPUWeight (${toString jobs.CPUWeight}) must be strictly below ai.slice CPUWeight (${toString ai.CPUWeight})";
         assert lib.assertMsg cfg.systemd.oomd.enableUserSlices
           "jester-slice-invariants: systemd.oomd.enableUserSlices is off, so the zz-oomd.conf drop-ins no longer override anything";
-        assert lib.assertMsg (builtins.length dropins == 2)
-          "jester-slice-invariants: expected 2 zz-oomd.conf drop-in packages, found ${toString (builtins.length dropins)}";
+        assert lib.assertMsg (builtins.length dropins == 3)
+          "jester-slice-invariants: expected 3 zz-oomd.conf drop-in packages, found ${toString (builtins.length dropins)}";
         pkgs.runCommand "jester-slice-invariants" { } ''
-          for s in ai ai-jobs; do
+          for s in ai ai-jobs ai-jobs-; do
             f=
             for p in ${lib.escapeShellArgs (map toString dropins)}; do
               c="$p/lib/systemd/user/$s.slice.d/zz-oomd.conf"

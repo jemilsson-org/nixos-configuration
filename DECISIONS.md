@@ -205,7 +205,7 @@ knobs if exposure hunts or contrast looks wrong.
 
 ## jester: ai.slice stays loose, jobs get reparented instead (2026-10-22)
 
-Do not tighten `ai.slice` MemoryHigh (16G) or MemoryMax (18G). Memory pressure
+Do not tighten `ai.slice` MemoryHigh (20G) or MemoryMax (22G; raised from 16G/18G on 2026-10-24, when 16G stalled every claude). Memory pressure
 on the AI slices is contained by moving work into the child `ai-jobs.slice`
 (MemoryHigh 10G, MemoryMax 12G), not by shrinking the parent.
 
@@ -218,9 +218,11 @@ fix was "cap, don't kill": per-slice `zz-oomd.conf` drop-ins set
 `slice.d/overrides.conf`. Tightening the parent re-creates the same pressure, so
 it is off the table.
 
-Each claude Bash scope also carries its own cap (MemoryHigh 5G, MemoryMax
-8G, MemorySwapMax 1G, added 2026-10-24) so one heavy command cannot take the
-whole shared pool and stall every session's commands.
+Jobs are not shared between sessions (2026-10-24). Each session's Bash
+commands run in `ai-jobs-p<claude pid>.slice` under ai-jobs, capped by the
+`ai-jobs-.slice.d` prefix drop-in (CPUWeight 100, MemoryHigh 5G, MemoryMax
+8G, MemorySwapMax 1G). `ai.slice` carries no CPUQuota: a 400% quota shared
+by all sessions held CPU pressure at 85-94% and stalled every claude.
 
 Containment mechanism: a spawner puts its background jobs in the child slice
 with `systemd-run --user --scope --slice=ai-jobs.slice`. The claude wrapper does
