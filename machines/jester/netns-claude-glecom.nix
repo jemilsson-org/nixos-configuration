@@ -42,6 +42,7 @@ in
 
   # claude-glecom wrapper: runs claude inside the namespace with its own config dir.
   # claude-glecom-local: same config dir, no namespace (MCP servers stay on loopback).
+  # Both turn off Remote Control at startup; settings.json is shared with ~/.claude.
   environment.systemPackages =
     let
       wrapper = name: mcpHost: execPrefix:
@@ -69,7 +70,7 @@ in
           fi
           exec ${execPrefix} \
             env HOME="$HOME" CLAUDE_CONFIG_DIR="$HOME/.claude-glecom" \
-            claude "$@"
+            claude --settings '{"remoteControlAtStartup":false}' "$@"
         '';
     in
     [
