@@ -12,6 +12,8 @@ Case 6: a face-bearing frame after settle -> pipeline terminated early, no
          lock. The fake gst-launch emits blank frames then one face frame
          then more blanks; we check the script stopped reading before the
          end (early termination) and did not lock.
+Case 7: swaylock.lock is held (flock) -> script exits 0 immediately,
+         fprintd-verify is NOT called, gst-launch is NOT called.
 """
 import os
 import stat
@@ -59,17 +61,18 @@ def make_fakes(bindir, calls_file, gst_mode, fprintd_match):
 
     frames_file = os.path.join(bindir, "frames.bin")
     if gst_mode == "error":
-        gst_body = "#!/bin/sh\necho 'fake gst-launch: camera busy' >&2\nexit 1\n"
+        gst_body = (f"#!/bin/sh\necho 'gst-launch' >> \"{calls_file}\"\n"
+                    f"echo 'fake gst-launch: camera busy' >&2\nexit 1\n")
     elif gst_mode == "blank":
         with open(frames_file, "wb") as f:
             f.write(blank * NUM_BUFFERS)
-        gst_body = f"#!/bin/sh\ncat {frames_file}\n"
+        gst_body = f"#!/bin/sh\necho 'gst-launch' >> \"{calls_file}\"\ncat {frames_file}\n"
     elif gst_mode == "face":
         # 5 blank settle frames, 1 face frame, then 14 more blanks.
         # The script should terminate after the face frame, before the rest.
         with open(frames_file, "wb") as f:
             f.write((blank * 5) + face + (blank * 14))
-        gst_body = f"#!/bin/sh\ncat {frames_file}\n"
+        gst_body = f"#!/bin/sh\necho 'gst-launch' >> \"{calls_file}\"\ncat {frames_file}\n"
     else:
         raise ValueError(gst_mode)
     write_exe(os.path.join(bindir, "gst-launch-1.0"), gst_body)
@@ -86,14 +89,16 @@ esac
     # fprintd-verify prints "Verify result: verify-match (...)" on match,
     # "Verify result: verify-no-match (...)" otherwise (per fprintd source).
     if fprintd_match:
-        fprintd_body = "#!/bin/sh\necho 'Verify result: verify-match (done)'\nexit 0\n"
+        fprintd_body = (f"#!/bin/sh\necho 'fprintd-verify' >> \"{calls_file}\"\n"
+                        f"echo 'Verify result: verify-match (done)'\nexit 0\n")
     else:
-        fprintd_body = "#!/bin/sh\necho 'Verify result: verify-no-match (done)'\nexit 1\n"
+        fprintd_body = (f"#!/bin/sh\necho 'fprintd-verify' >> \"{calls_file}\"\n"
+                        f"echo 'Verify result: verify-no-match (done)'\nexit 1\n")
     write_exe(os.path.join(bindir, "fprintd-verify"), fprintd_body)
 
 
 def run_case(cascade, gst_mode, fprintd_match, resume_after_start=False,
-             extra_args=None):
+             extra_args=None, hold_swaylock=False):
     with tempfile.TemporaryDirectory() as td:
         bindir = os.path.join(td, "bin")
         os.makedirs(bindir)
@@ -105,6 +110,22 @@ def run_case(cascade, gst_mode, fprintd_match, resume_after_start=False,
         env = dict(os.environ)
         env["PATH"] = bindir + ":" + env["PATH"]
         env["XDG_RUNTIME_DIR"] = td
+
+        # If requested, hold flock on the swaylock.lock file in a child
+        # process so presence-lock.py sees it as already held.
+        lock_holder = None
+        if hold_swaylock:
+            lock_path = os.path.join(td, "swaylock.lock")
+            lock_holder = subprocess.Popen(
+                [sys.executable, "-c",
+                 f"import fcntl, os, time; "
+                 f"fd = os.open({lock_path!r}, os.O_RDWR | os.O_CREAT, 0o600); "
+                 f"fcntl.flock(fd, fcntl.LOCK_EX); "
+                 f"print('held', flush=True); "
+                 f"time.sleep(60)"],
+                stdout=subprocess.PIPE,
+            )
+            lock_holder.stdout.readline()  # wait until lock is held
 
         cmd = [
             sys.executable, os.path.join(HERE, "presence-lock.py"),
@@ -127,51 +148,65 @@ def run_case(cascade, gst_mode, fprintd_match, resume_after_start=False,
         stderr = proc.stderr.read().decode(errors="replace") if proc.stderr else ""
         proc.wait(timeout=60)
 
+        # Kill the lock holder if we started one.
+        if lock_holder:
+            lock_holder.kill()
+            lock_holder.wait()
+
         calls = open(calls_file).read()
         locked = "lock-session" in calls
-        return proc.returncode, locked, stderr
+        return proc.returncode, locked, stderr, calls
 
 
 def main():
     cascade = sys.argv[1]
 
     # Case 1: no face, no fingerprint, no resume -> lock.
-    rc, locked, err = run_case(cascade, gst_mode="blank", fprintd_match=False)
+    rc, locked, err, calls = run_case(cascade, gst_mode="blank", fprintd_match=False)
     assert rc == 0, f"blank case: expected exit 0, got {rc}: {err}"
     assert locked, f"blank case: expected lock-session, none logged: {err}"
 
     # Case 2: camera unreadable -> fail open, no lock.
-    rc, locked, err = run_case(cascade, gst_mode="error", fprintd_match=False)
+    rc, locked, err, calls = run_case(cascade, gst_mode="error", fprintd_match=False)
     assert rc == 0, f"camera-busy case: expected exit 0, got {rc}: {err}"
     assert not locked, f"camera-busy case: lock-session must NOT be called: {err}"
 
     # Case 3: no face, but resumed during check -> no lock.
-    rc, locked, err = run_case(cascade, gst_mode="blank", fprintd_match=False,
+    rc, locked, err, calls = run_case(cascade, gst_mode="blank", fprintd_match=False,
                                resume_after_start=True)
     assert rc == 0, f"resumed case: expected exit 0, got {rc}: {err}"
     assert not locked, f"resumed case: lock-session must NOT be called: {err}"
     assert "resumed=True" in err, f"resumed case: expected resumed=True in log: {err}"
 
     # Case 4: no face, fingerprint match -> no lock.
-    rc, locked, err = run_case(cascade, gst_mode="blank", fprintd_match=True)
+    rc, locked, err, calls = run_case(cascade, gst_mode="blank", fprintd_match=True)
     assert rc == 0, f"fprintd-match case: expected exit 0, got {rc}: {err}"
     assert not locked, f"fprintd-match case: lock-session must NOT be called: {err}"
     assert "fingerprint=match" in err, f"fprintd-match case: expected fingerprint=match: {err}"
 
     # Case 5: no face, fprintd no match -> lock.
-    rc, locked, err = run_case(cascade, gst_mode="blank", fprintd_match=False)
+    rc, locked, err, calls = run_case(cascade, gst_mode="blank", fprintd_match=False)
     assert rc == 0, f"fprintd-no-match case: expected exit 0, got {rc}: {err}"
     assert locked, f"fprintd-no-match case: lock-session must be called: {err}"
 
     # Case 6: face on an early post-settle frame -> no lock, pipeline
     # terminated early (frames_seen < NUM_BUFFERS).
-    rc, locked, err = run_case(cascade, gst_mode="face", fprintd_match=False)
+    rc, locked, err, calls = run_case(cascade, gst_mode="face", fprintd_match=False)
     assert rc == 0, f"face case: expected exit 0, got {rc}: {err}"
     assert not locked, f"face case: lock-session must NOT be called: {err}"
     assert "face=True" in err, f"face case: expected face=True in log: {err}"
     # The face is frame 6 (0-indexed 5), so frames_seen should be 6, well
     # under NUM_BUFFERS=20.
     assert "frames=6" in err, f"face case: expected frames=6 (early stop), got: {err}"
+
+    # Case 7: swaylock already holding the lock file -> script exits early
+    # without touching the camera or fprintd.
+    rc, locked, err, calls = run_case(cascade, gst_mode="blank", fprintd_match=False,
+                                hold_swaylock=True)
+    assert rc == 0, f"already-locked case: expected exit 0, got {rc}: {err}"
+    assert not locked, f"already-locked case: lock-session must NOT be called: {err}"
+    assert "swaylock already active" in err, \
+        f"already-locked case: expected early-exit log, got: {err}"
 
     print("presence-lock-test: ok")
 
