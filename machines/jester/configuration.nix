@@ -650,6 +650,9 @@ in
     in
     ''
       ACTION=="change", SUBSYSTEM=="drm", KERNEL=="card[0-9]*", RUN+="${ehomewei-lanes}"
+      # Synaptics Prometheus 06cb:00fc fingerprint reader: USB autosuspend
+      # wedges the sensor (reset storms, "transfer timed out"), so keep it on.
+      ACTION=="add|change", SUBSYSTEM=="usb", ATTR{idVendor}=="06cb", ATTR{idProduct}=="00fc", ATTR{power/control}="on"
     '';
 
   networking = {
@@ -1095,10 +1098,13 @@ in
 
   # swaylock replaces hyprlock on jester: hyprlock (0.9.6 and upstream
   # master) hung in a futex on unlock and locked the user out. swaylock does
-  # all auth through PAM. Fingerprint is off: the Synaptics 06cb:00fc sensor
-  # wedges ("Device was already claimed", "transfer timed out"), pam_fprintd
-  # then hangs swaylock's PAM child and the user is locked out. Password only.
-  security.pam.services.swaylock.fprintAuth = false;
+  # all auth through PAM. pam_unix first so a typed password unlocks at once;
+  # Enter on an empty field falls through to pam_fprintd. Sensor autosuspend
+  # is disabled by the udev rule above because it wedged the reader.
+  security.pam.services.swaylock = {
+    fprintAuth = true;
+    rules.auth.fprintd.order = config.security.pam.services.swaylock.rules.auth.unix.order + 10;
+  };
   # config/i3_x11.nix enables hyprlock for every Hyprland host; jester opts out.
   programs.hyprlock.enable = lib.mkForce false;
 
