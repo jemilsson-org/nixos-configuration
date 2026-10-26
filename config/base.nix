@@ -223,6 +223,25 @@ in
         ];
       };
     };
+    neovim = {
+      enable = true;
+      defaultEditor = true;
+      viAlias = true;
+      vimAlias = true;
+      configure = {
+        packages = {
+          myPlugins = {
+            start = with pkgs.vimPlugins; [
+              render-markdown-nvim
+              (nvim-treesitter.withPlugins (p: [ p.markdown p.markdown_inline ]))
+              deoplete-nvim
+              deoplete-jedi
+            ];
+          };
+        };
+        customRC = "lua require('render-markdown').setup({})";
+      };
+    };
   };
 
   #boot.extraModulePackages = [ config.boot.kernelPackages.wireguard ];
@@ -261,11 +280,6 @@ in
       inetutils
       traceroute
 
-      #Neovim
-      neovim
-      vimPlugins.deoplete-nvim
-      vimPlugins.deoplete-jedi
-
       #Tunneling
       wireguard-tools
 
@@ -275,8 +289,6 @@ in
     ];
 
     shellAliases = {
-      "vi" = "nvim";
-      "vim" = "nvim";
       "please" = "sudo";
       "plz" = "sudo";
     };
