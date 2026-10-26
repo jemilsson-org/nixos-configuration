@@ -1095,13 +1095,10 @@ in
 
   # swaylock replaces hyprlock on jester: hyprlock (0.9.6 and upstream
   # master) hung in a futex on unlock and locked the user out. swaylock does
-  # all auth through PAM. pam_unix runs before pam_fprintd here so a typed
-  # password unlocks at once; Enter on an empty field fails pam_unix and
-  # falls through to pam_fprintd, which waits for a finger.
-  security.pam.services.swaylock = {
-    fprintAuth = true;
-    rules.auth.fprintd.order = config.security.pam.services.swaylock.rules.auth.unix.order + 10;
-  };
+  # all auth through PAM. Fingerprint is off: the Synaptics 06cb:00fc sensor
+  # wedges ("Device was already claimed", "transfer timed out"), pam_fprintd
+  # then hangs swaylock's PAM child and the user is locked out. Password only.
+  security.pam.services.swaylock.fprintAuth = false;
   # config/i3_x11.nix enables hyprlock for every Hyprland host; jester opts out.
   programs.hyprlock.enable = lib.mkForce false;
 
