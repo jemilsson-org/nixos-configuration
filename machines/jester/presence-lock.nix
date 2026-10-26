@@ -22,6 +22,13 @@
 let
   cfg = config.services.presence-lock;
 
+  # YuNet face-detection model (2023mar revision). Fetched at build time and
+  # passed to the script via --model; the sha256 pins the exact bytes.
+  yunetModel = pkgs.fetchurl {
+    url = "https://media.githubusercontent.com/media/opencv/opencv_zoo/48b10fa505aeb51fbd127fc60a5c660040e823b7/models/face_detection_yunet/face_detection_yunet_2023mar.onnx";
+    hash = "sha256-jyOD5N08+7RVPqhxgQf8BCMhDclk+fQoBgSATtJVL6Q=";
+  };
+
   presencePython = pkgs.python3.withPackages (ps: [ ps.opencv4 ps.numpy ]);
   gst = pkgs.gst_all_1;
   gstPluginPath = lib.makeSearchPath "lib/gstreamer-1.0" [
@@ -36,7 +43,7 @@ let
     text = ''
       export GST_PLUGIN_SYSTEM_PATH_1_0="${gstPluginPath}"
       exec python3 ${./presence-lock.py} \
-        --cascade ${pkgs.opencv4}/share/opencv4/haarcascades/haarcascade_frontalface_default.xml \
+        --model ${yunetModel} \
         "$@"
     '';
   };

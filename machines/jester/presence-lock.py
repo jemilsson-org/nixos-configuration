@@ -37,9 +37,14 @@ import time
 import cv2
 import numpy as np
 
-# nixpkgs' opencv4 python bindings don't ship cv2.data (no bundled cascade
-# dir), unlike upstream pip wheels, so the cascade path is passed in
-# explicitly by presence-lock.nix instead of relying on cv2.data.haarcascades.
+# The YuNet ONNX model path is passed in explicitly by presence-lock.nix
+# (--model); nixpkgs' opencv4 python bindings ship no model data.
+
+# YuNet thresholds: score 0.6 (below the 0.9 default, biased toward seeing a
+# face), NMS 0.3, keep at most 50 candidates (we need only one).
+YUNET_SCORE_THRESHOLD = 0.6
+YUNET_NMS_THRESHOLD = 0.3
+YUNET_TOP_K = 50
 
 
 def log(msg: str) -> None:
@@ -86,11 +91,11 @@ def swaylock_holding() -> bool:
         os.close(fd)
 
 
-def stream_and_detect(detector: "cv2.CascadeClassifier", gst_launch: str,
+def stream_and_detect(detector: "cv2.FaceDetectorYN", gst_launch: str,
                           target_object: str, width: int, height: int,
                           num_buffers: int, timeout: float,
                           settle_frames: int) -> tuple:
-    """Streams GRAY8 frames from a gst-launch pipeline, runs Haar detection
+    """Streams BGR frames from a gst-launch pipeline, runs YuNet detection
     per frame after `settle_frames` for auto-exposure, and terminates the
     pipeline as soon as a face is found.
 
@@ -99,13 +104,13 @@ def stream_and_detect(detector: "cv2.CascadeClassifier", gst_launch: str,
     so the caller fails open without locking. `num_buffers` is the upper
     bound on frames the pipeline will emit; the overall `timeout` caps the
     whole read."""
-    frame_size = width * height
+    frame_size = width * height * 3
     cmd = [
         gst_launch, "-q",
         "pipewiresrc", f"target-object={target_object}", f"num-buffers={num_buffers}",
         "!", "videoconvert",
         "!", "videoscale",
-        "!", f"video/x-raw,format=GRAY8,width={width},height={height}",
+        "!", f"video/x-raw,format=BGR,width={width},height={height}",
         "!", "fdsink", "fd=1",
     ]
     try:
@@ -137,10 +142,10 @@ def stream_and_detect(detector: "cv2.CascadeClassifier", gst_launch: str,
                 break
             buf.extend(chunk)
             while (len(buf) - consumed) >= frame_size:
-                gray = np.frombuffer(
+                frame = np.frombuffer(
                     bytes(buf[consumed:consumed + frame_size]),
                     dtype=np.uint8,
-                ).reshape(height, width)
+                ).reshape(height, width, 3)
                 consumed += frame_size
                 frames_seen += 1
                 # Drop processed bytes to bound memory.
@@ -151,16 +156,8 @@ def stream_and_detect(detector: "cv2.CascadeClassifier", gst_launch: str,
                 # matching the old any_face(frames[-5:]) behaviour.
                 if frames_seen <= settle_frames:
                     continue
-                eq = cv2.equalizeHist(gray)
-                # Params tuned live against real images (a portrait with a
-                # face, a camera frame of an empty room): equalizeHist +
-                # scaleFactor=1.05, minNeighbors=4, minSize=50 cleanly
-                # separated the two (1 face vs. 0); scaleFactor 1.1+ missed
-                # the real face, minNeighbors 3 / minSize 40 false-
-                # positived on the empty room.
-                faces = detector.detectMultiScale(eq, scaleFactor=1.05,
-                                                  minNeighbors=4, minSize=(50, 50))
-                if len(faces) > 0:
+                faces = detector.detect(frame)[1]
+                if faces is not None and len(faces) > 0:
                     face_seen = True
                     proc.terminate()
                     try:
@@ -211,7 +208,7 @@ def main() -> int:
     ap.add_argument("--timeout", type=float, default=10.0, help="seconds to wait for gst-launch")
     ap.add_argument("--fp-grace", type=float, default=3.0,
                     help="seconds to wait for a fingerprint after a face-less check")
-    ap.add_argument("--cascade", required=True, help="path to the Haar cascade XML file")
+    ap.add_argument("--model", required=True, help="path to the YuNet ONNX model file")
     ap.add_argument("--resumed-file",
                     default=os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/run/user/1000"),
                                          "presence-lock.resumed"),
@@ -225,13 +222,21 @@ def main() -> int:
         log("swaylock already active, skipping check")
         return 0
 
-    start = time.time()
-    log(f"start target={args.target_object} cascade={args.cascade}")
+    if session_locked():
+        log("session already locked, skipping check")
+        return 0
 
-    detector = cv2.CascadeClassifier(args.cascade)
-    if detector.empty():
-        log("failed to load Haar cascade")
-        return 1
+    start = time.time()
+    log(f"start target={args.target_object} model={args.model}")
+
+    try:
+        detector = cv2.FaceDetectorYN.create(
+            args.model, "", (args.width, args.height),
+            YUNET_SCORE_THRESHOLD, YUNET_NMS_THRESHOLD, YUNET_TOP_K,
+        )
+    except Exception as e:
+        log(f"failed to load YuNet model, not locking: {e}")
+        return 0
 
     # Run fprintd-verify concurrently with the face check so a finger touch
     # during the check also prevents the lock. Any failure (binary missing,

@@ -3,17 +3,19 @@
 fprintd-verify on PATH so no real camera, fingerprint reader or session is
 touched. See presence-lock.nix for the production wiring this stands in for.
 
-Case 1: blank frames, no fingerprint, no resume -> lock.
+Case 1: blank BGR frames, no fingerprint, no resume -> lock.
 Case 2: gst-launch exits non-zero (camera busy) -> fail open, no lock.
-Case 3: blank frames but resumed marker touched after start -> no lock.
-Case 4: blank frames, fprintd-verify reports verify-match -> no lock.
-Case 5: blank frames, fprintd-verify reports no match -> lock.
+Case 3: blank BGR frames but resumed marker touched after start -> no lock.
+Case 4: blank BGR frames, fprintd-verify reports verify-match -> no lock.
+Case 5: blank BGR frames, fprintd-verify reports no match -> lock.
 Case 6: a face-bearing frame after settle -> pipeline terminated early, no
          lock. The fake gst-launch emits blank frames then one face frame
          then more blanks; we check the script stopped reading before the
          end (early termination) and did not lock.
 Case 7: swaylock.lock is held (flock) -> script exits 0 immediately,
          fprintd-verify is NOT called, gst-launch is NOT called.
+Case 8: loginctl returns LockedHint "yes" -> script exits 0 immediately,
+         no lock, and the fake gst was never invoked.
 """
 import os
 import stat
@@ -29,20 +31,12 @@ WIDTH, HEIGHT, NUM_BUFFERS = 640, 360, 20
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
-def make_face_frame():
-    """Draws a synthetic face that the Haar cascade detects (verified
-    live: 1 face at (237,94,167,167))."""
-    img = np.full((HEIGHT, WIDTH), 160, np.uint8)
-    cv2.ellipse(img, (320, 180), (70, 90), 0, 0, 360, 210, -1)
-    cv2.circle(img, (295, 160), 8, 40, -1)
-    cv2.circle(img, (345, 160), 8, 40, -1)
-    cv2.ellipse(img, (295, 160), (15, 12), 0, 0, 360, 100, -1)
-    cv2.ellipse(img, (345, 160), (15, 12), 0, 0, 360, 100, -1)
-    cv2.rectangle(img, (315, 165), (325, 200), 190, -1)
-    cv2.ellipse(img, (320, 215), (20, 8), 0, 0, 360, 90, -1)
-    cv2.rectangle(img, (250, 85), (390, 140), 80, -1)
-    cv2.rectangle(img, (278, 148), (312, 154), 60, -1)
-    cv2.rectangle(img, (328, 148), (362, 154), 60, -1)
+def make_face_frame(lena_path):
+    """Load lena.jpg, resize to WIDTHxHEIGHT, return BGR bytes."""
+    img = cv2.imread(lena_path)
+    if img is None:
+        raise RuntimeError(f"failed to load {lena_path}")
+    img = cv2.resize(img, (WIDTH, HEIGHT))
     return img.tobytes()
 
 
@@ -52,12 +46,11 @@ def write_exe(path, contents):
     os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
 
-def make_fakes(bindir, calls_file, gst_mode, fprintd_match):
+def make_fakes(bindir, calls_file, gst_mode, fprintd_match, face_frame):
     """gst_mode: 'blank' for all-zero frames, 'error' for exit 1, 'face' for
     blank frames then a face frame then more blanks."""
-    frame_size = WIDTH * HEIGHT
+    frame_size = WIDTH * HEIGHT * 3
     blank = b"\x00" * frame_size
-    face = make_face_frame()
 
     frames_file = os.path.join(bindir, "frames.bin")
     if gst_mode == "error":
@@ -71,7 +64,7 @@ def make_fakes(bindir, calls_file, gst_mode, fprintd_match):
         # 5 blank settle frames, 1 face frame, then 14 more blanks.
         # The script should terminate after the face frame, before the rest.
         with open(frames_file, "wb") as f:
-            f.write((blank * 5) + face + (blank * 14))
+            f.write((blank * 5) + face_frame + (blank * 14))
         gst_body = f"#!/bin/sh\necho 'gst-launch' >> \"{calls_file}\"\ncat {frames_file}\n"
     else:
         raise ValueError(gst_mode)
@@ -79,11 +72,11 @@ def make_fakes(bindir, calls_file, gst_mode, fprintd_match):
 
     # Records every call; answers LockedHint "no" so the script proceeds.
     loginctl_body = f"""#!/bin/sh
-echo "$*" >> "{calls_file}"
-case "$1 $2" in
-  "show-session self") echo no ;;
-esac
-"""
+    echo "$*" >> "{calls_file}"
+    case "$1 $2" in
+      "show-session self") echo no ;;
+    esac
+    """
     write_exe(os.path.join(bindir, "loginctl"), loginctl_body)
 
     # fprintd-verify prints "Verify result: verify-match (...)" on match,
@@ -97,14 +90,37 @@ esac
     write_exe(os.path.join(bindir, "fprintd-verify"), fprintd_body)
 
 
-def run_case(cascade, gst_mode, fprintd_match, resume_after_start=False,
-             extra_args=None, hold_swaylock=False):
+def make_fakes_session_locked(bindir, calls_file):
+    """Fake loginctl that returns LockedHint 'yes' (session already locked)."""
+    loginctl_body = f"""#!/bin/sh
+    echo "$*" >> "{calls_file}"
+    case "$1 $2" in
+      "show-session self") echo yes ;;
+    esac
+    """
+    write_exe(os.path.join(bindir, "loginctl"), loginctl_body)
+    # gst-launch should never be called; but provide a stub that would fail if called
+    gst_body = f"#!/bin/sh\necho 'gst-launch' >> \"{calls_file}\"\necho 'gst-launch should not be called' >&2\nexit 1\n"
+    write_exe(os.path.join(bindir, "gst-launch-1.0"), gst_body)
+    # fprintd-verify should never be called
+    fprintd_body = f"#!/bin/sh\necho 'fprintd-verify' >> \"{calls_file}\"\necho 'fprintd-verify should not be called' >&2\nexit 1\n"
+    write_exe(os.path.join(bindir, "fprintd-verify"), fprintd_body)
+
+
+def run_case(model_path, lena_path, gst_mode, fprintd_match, resume_after_start=False,
+             extra_args=None, hold_swaylock=False, session_locked=False):
     with tempfile.TemporaryDirectory() as td:
         bindir = os.path.join(td, "bin")
         os.makedirs(bindir)
         calls_file = os.path.join(td, "calls.log")
         open(calls_file, "w").close()
-        make_fakes(bindir, calls_file, gst_mode, fprintd_match)
+
+        face_frame = make_face_frame(lena_path)
+
+        if session_locked:
+            make_fakes_session_locked(bindir, calls_file)
+        else:
+            make_fakes(bindir, calls_file, gst_mode, fprintd_match, face_frame)
 
         resumed_file = os.path.join(td, "presence-lock.resumed")
         env = dict(os.environ)
@@ -129,7 +145,7 @@ def run_case(cascade, gst_mode, fprintd_match, resume_after_start=False,
 
         cmd = [
             sys.executable, os.path.join(HERE, "presence-lock.py"),
-            "--cascade", cascade, "--width", str(WIDTH), "--height", str(HEIGHT),
+            "--model", model_path, "--width", str(WIDTH), "--height", str(HEIGHT),
             "--num-buffers", str(NUM_BUFFERS), "--timeout", "10",
             "--settle-frames", "3",
             "--fp-grace", "2",
@@ -159,39 +175,40 @@ def run_case(cascade, gst_mode, fprintd_match, resume_after_start=False,
 
 
 def main():
-    cascade = sys.argv[1]
+    model_path = sys.argv[1]
+    lena_path = sys.argv[2]
 
     # Case 1: no face, no fingerprint, no resume -> lock.
-    rc, locked, err, calls = run_case(cascade, gst_mode="blank", fprintd_match=False)
+    rc, locked, err, calls = run_case(model_path, lena_path, gst_mode="blank", fprintd_match=False)
     assert rc == 0, f"blank case: expected exit 0, got {rc}: {err}"
     assert locked, f"blank case: expected lock-session, none logged: {err}"
 
     # Case 2: camera unreadable -> fail open, no lock.
-    rc, locked, err, calls = run_case(cascade, gst_mode="error", fprintd_match=False)
+    rc, locked, err, calls = run_case(model_path, lena_path, gst_mode="error", fprintd_match=False)
     assert rc == 0, f"camera-busy case: expected exit 0, got {rc}: {err}"
     assert not locked, f"camera-busy case: lock-session must NOT be called: {err}"
 
     # Case 3: no face, but resumed during check -> no lock.
-    rc, locked, err, calls = run_case(cascade, gst_mode="blank", fprintd_match=False,
+    rc, locked, err, calls = run_case(model_path, lena_path, gst_mode="blank", fprintd_match=False,
                                resume_after_start=True)
     assert rc == 0, f"resumed case: expected exit 0, got {rc}: {err}"
     assert not locked, f"resumed case: lock-session must NOT be called: {err}"
     assert "resumed=True" in err, f"resumed case: expected resumed=True in log: {err}"
 
     # Case 4: no face, fingerprint match -> no lock.
-    rc, locked, err, calls = run_case(cascade, gst_mode="blank", fprintd_match=True)
+    rc, locked, err, calls = run_case(model_path, lena_path, gst_mode="blank", fprintd_match=True)
     assert rc == 0, f"fprintd-match case: expected exit 0, got {rc}: {err}"
     assert not locked, f"fprintd-match case: lock-session must NOT be called: {err}"
     assert "fingerprint=match" in err, f"fprintd-match case: expected fingerprint=match: {err}"
 
     # Case 5: no face, fprintd no match -> lock.
-    rc, locked, err, calls = run_case(cascade, gst_mode="blank", fprintd_match=False)
+    rc, locked, err, calls = run_case(model_path, lena_path, gst_mode="blank", fprintd_match=False)
     assert rc == 0, f"fprintd-no-match case: expected exit 0, got {rc}: {err}"
     assert locked, f"fprintd-no-match case: lock-session must be called: {err}"
 
     # Case 6: face on an early post-settle frame -> no lock, pipeline
     # terminated early (frames_seen < NUM_BUFFERS).
-    rc, locked, err, calls = run_case(cascade, gst_mode="face", fprintd_match=False)
+    rc, locked, err, calls = run_case(model_path, lena_path, gst_mode="face", fprintd_match=False)
     assert rc == 0, f"face case: expected exit 0, got {rc}: {err}"
     assert not locked, f"face case: lock-session must NOT be called: {err}"
     assert "face=True" in err, f"face case: expected face=True in log: {err}"
@@ -201,12 +218,23 @@ def main():
 
     # Case 7: swaylock already holding the lock file -> script exits early
     # without touching the camera or fprintd.
-    rc, locked, err, calls = run_case(cascade, gst_mode="blank", fprintd_match=False,
+    rc, locked, err, calls = run_case(model_path, lena_path, gst_mode="blank", fprintd_match=False,
                                 hold_swaylock=True)
     assert rc == 0, f"already-locked case: expected exit 0, got {rc}: {err}"
     assert not locked, f"already-locked case: lock-session must NOT be called: {err}"
     assert "swaylock already active" in err, \
         f"already-locked case: expected early-exit log, got: {err}"
+
+    # Case 8: loginctl returns LockedHint 'yes' -> script exits early
+    # without touching the camera or fprintd.
+    rc, locked, err, calls = run_case(model_path, lena_path, gst_mode="blank", fprintd_match=False,
+                                session_locked=True)
+    assert rc == 0, f"session-locked case: expected exit 0, got {rc}: {err}"
+    assert not locked, f"session-locked case: lock-session must NOT be called: {err}"
+    assert "session already locked" in err, \
+        f"session-locked case: expected early-exit log, got: {err}"
+    assert "gst-launch" not in calls, f"session-locked case: gst-launch must NOT be called: {calls}"
+    assert "fprintd-verify" not in calls, f"session-locked case: fprintd-verify must NOT be called: {calls}"
 
     print("presence-lock-test: ok")
 
