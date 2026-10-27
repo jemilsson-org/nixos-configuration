@@ -67,7 +67,6 @@ in
     ./presence-lock.nix
     ./nl1-builder.nix
     ./netns-claude-glecom.nix
-    ./netns-claude-jail.nix
     ./pi-lens.nix
     ./nix-retry.nix
     ../../config/mx-debounce.nix
