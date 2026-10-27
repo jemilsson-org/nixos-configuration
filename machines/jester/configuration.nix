@@ -1113,6 +1113,46 @@ in
     serviceConfig = {
       Restart = "on-failure";
       RestartSec = 2;
+      # fprintd 1.94 G_LOG_DOMAIN is "fprintd" (meson.project_name); this
+      # enables exactly fprintd's own g_debug lines (claim sender at
+      # src/device.c:1121, "Authorization granted to %s ..." at :2759),
+      # not libfprint/gusb driver dumps (would need all=).
+      Environment = [ "G_MESSAGES_DEBUG=fprintd" ];
+    };
+  };
+
+  # Wedge recovery: after a USB "transfer timed out" the 06cb:00fc reader
+  # stays claimed and fingerprint unlock is dead until reboot. Follow the
+  # fprintd journal (-n 0: no replay of old lines after a watcher restart);
+  # on that line stop fprintd, usbreset the reader by vendor:product (no
+  # port path), and start fprintd again. At most one reset per 60 s.
+  systemd.services.fprint-reset-watch = {
+    description = "Reset the fingerprint reader when fprintd reports a USB timeout";
+    wantedBy = [ "multi-user.target" ];
+    after  = [ "dbus.service" ];
+    serviceConfig = {
+      ExecStart = lib.getExe (pkgs.writeShellApplication {
+        name = "fprint-reset-watch";
+        runtimeInputs = [ pkgs.systemd pkgs.usbutils pkgs.util-linux ];
+        text = ''
+          last=-60
+          journalctl -f -n 0 -u fprintd -o cat | while read -r line; do
+            case "$line" in
+              *"transfer timed out"*) ;;
+              *) continue ;;
+            esac
+            if (( SECONDS - last < 60 )); then continue; fi
+            last=$SECONDS
+            logger -t fprint-reset "transfer timed out: resetting 06cb:00fc"
+            systemctl stop fprintd
+            usbreset 06cb:00fc || logger -t fprint-reset "usbreset failed"
+            systemctl restart fprintd
+            logger -t fprint-reset "reset done, fprintd restarted"
+          done
+        '';
+      });
+      Restart = "always";
+      RestartSec = 5;
     };
   };
 
