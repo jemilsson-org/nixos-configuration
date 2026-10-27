@@ -33,6 +33,12 @@
     hyprland = {
       url = "github:hyprwm/Hyprland";
     };
+    # papper (markdown editor, jester only). Local path pending a remote.
+    # Deliberately NOT following nixpkgs: it pins its own gpui/crate2nix
+    # build against nixos-unstable.
+    papper = {
+      url = "git+file:///home/jonas/workspace/papper?ref=feat/integration";
+    };
     # bambu-studio = {
     #   url = "github:zhaofengli/nixpkgs/bambu-studio";
     # };
@@ -52,7 +58,7 @@
     */
   };
 
-  outputs = { self, nixpkgs, nixpkgs-unstable, nixpkgs-jemilsson, fafnir, syna, claude-code, hyprland, nixos-wsl }: # , agenix, agenix-rekey }: # bambu-studio,
+  outputs = { self, nixpkgs, nixpkgs-unstable, nixpkgs-jemilsson, fafnir, syna, claude-code, hyprland, papper, nixos-wsl }: # , agenix, agenix-rekey }: # bambu-studio,
     let
       system = "x86_64-linux";
       overlay-unstable = final: prev: {
@@ -262,7 +268,7 @@
         };
 
         jester = nixpkgs.lib.nixosSystem {
-          specialArgs = { inherit hyprland; };
+          specialArgs = { inherit hyprland papper; };
           modules = [
             ({ config, pkgs, ... }: { nixpkgs.hostPlatform = system; nixpkgs.overlays = [ overlay-unstable overlay-jemilsson ]; })
             fafnir.nixosModules.default

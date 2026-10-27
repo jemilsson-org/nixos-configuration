@@ -1,4 +1,4 @@
-{ config, lib, pkgs, stdenv, hyprland, ... }:
+{ config, lib, pkgs, stdenv, hyprland, papper, ... }:
 let
   #containers = import ./containers/containers.nix { pkgs = pkgs; config = config; stdenv = stdenv; };
   #cardano-node = removed - no longer needed
@@ -907,6 +907,7 @@ in
 
   environment.systemPackages = with pkgs; [
     swaylock
+    papper.packages.x86_64-linux.default
     # FreeBuds control (ANC, battery, gestures, quality preference) over
     # SPP. Two fixes pending upstream: the wrapper misses the `packaging`
     # dep (openfreebuds#93-style packaging bug), and FreeBuds 6 is not in
