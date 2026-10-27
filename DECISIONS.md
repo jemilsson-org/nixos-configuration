@@ -238,3 +238,10 @@ slice drops MemorySwapMax, or if a `zz-oomd.conf` drop-in stops saying
 `auto`. Size strings go through a parser that throws on anything it cannot read,
 so a typo fails loudly rather than comparing as zero. Pure eval plus one trivial
 derivation: no VM, no network, no root.
+
+## papper: local flake input, own nixpkgs (2026-10-27)
+
+jester installs papper from `git+file:///home/jonas/workspace/papper?ref=feat/integration`,
+since the repo has no remote; the config only builds on this machine until it
+does. The input does not follow our nixpkgs: papper pins its own for the Rust
+and GPUI build, and following ours could break it on a system update.
