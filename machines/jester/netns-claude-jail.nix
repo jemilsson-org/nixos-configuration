@@ -2,7 +2,7 @@
 let
   ip = "${pkgs.iproute2}/bin/ip";
   iptables = "${pkgs.iptables}/bin/iptables";
-  ip6tables = "${pkgs.ip6tables}/bin/ip6tables";
+  ip6tables = "${pkgs.iptables}/bin/ip6tables";
 
   # Setuid helper: enters the claude-jail netns and drops back to calling user
   nsenter-cj = pkgs.runCommandCC "nsenter-claude-jail" { } ''
