@@ -76,6 +76,7 @@
         fafnir = fafnir.packages.${system}.default;
         syna = syna.packages.${system}.default;
         claude-code = claude-code.packages.${system}.default;
+        kimi-code = prev.callPackage ./packages/kimi-code { };
       };
 
       # Overlay that imports packages from nixpkgs-jemilsson
@@ -247,6 +248,7 @@
       packages.${system} = {
         mx-debounce = pkgs.callPackage ./packages/mx-debounce { };
         webcam-calibrate = pkgs.callPackage ./machines/jester/webcam-calibrate.nix { };
+        kimi-code = pkgs.kimi-code;
         inherit nl1-builder-keygen;
       };
 
