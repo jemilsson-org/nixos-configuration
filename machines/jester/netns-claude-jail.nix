@@ -53,7 +53,7 @@ EOF
     set -euo pipefail
 
     # Ensure we're in the namespace
-    exec ${nsenter-cj}/bin/nsenter-claude-jail ${pkgs.setpriv}/bin/setpriv --reuid=$(id -u) --regid=$(id -g) --clear-groups --init-groups -- ${pkgs.bubblewrap}/bin/bwrap \
+    exec ${nsenter-cj}/bin/nsenter-claude-jail ${pkgs.util-linux}/bin/setpriv --reuid=$(id -u) --regid=$(id -g) --clear-groups --init-groups -- ${pkgs.bubblewrap}/bin/bwrap \
       --ro-bind /nix/store /nix/store \
       --ro-bind /run/opengl-driver /run/opengl-driver \
       --ro-bind /run/current-system/sw /run/current-system/sw \
@@ -170,11 +170,11 @@ in
     '';
   };
 
-  # IP forwarding for namespace traffic
-  boot.kernel.sysctl = {
-    "net.ipv4.ip_forward" = 1;
-    "net.ipv6.conf.all.forwarding" = 1;
-  };
+  # IP forwarding for namespace traffic (already set by netns-claude-glecom.nix)
+  # boot.kernel.sysctl = {
+  #   "net.ipv4.ip_forward" = 1;
+  #   "net.ipv6.conf.all.forwarding" = 1;
+  # };
 
   # NAT: masquerade namespace traffic leaving via default route
   networking.firewall.extraCommands = lib.mkAfter ''
