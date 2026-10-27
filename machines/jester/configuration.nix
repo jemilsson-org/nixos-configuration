@@ -1106,6 +1106,16 @@ in
     fprintAuth = true;
     rules.auth.fprintd.order = config.security.pam.services.swaylock.rules.auth.unix.order + 10;
   };
+
+  # Recover fprintd after a crash (e.g. a stale sensor claim wedge); without
+  # this a wedged daemon stays down until a manual restart.
+  systemd.services.fprintd = {
+    serviceConfig = {
+      Restart = "on-failure";
+      RestartSec = 2;
+    };
+  };
+
   # config/i3_x11.nix enables hyprlock for every Hyprland host; jester opts out.
   programs.hyprlock.enable = lib.mkForce false;
 

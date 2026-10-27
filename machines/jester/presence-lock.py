@@ -13,10 +13,6 @@ already holds the camera) all fail open: log and exit without locking. See
 presence-lock.nix for the packaging and why libcamera forces this route
 instead of a plain cv2.VideoCapture.
 
-While the face check runs, fprintd-verify runs concurrently; a fingerprint
-match also prevents the lock. If fprintd is absent or errors (no finger
-enrolled, no reader, polkit deny), it is ignored and the face result decides.
-
 If the user becomes active while the check runs, hypridle resumes the
 listener and on-resume touches $XDG_RUNTIME_DIR/presence-lock.resumed; the
 script checks that file's mtime before locking and skips the lock if it is
@@ -24,8 +20,8 @@ newer than the check start (the race between the check finishing and the
 user returning to the keyboard).
 
 Each run logs a start line and a summary line (face, frames read,
-fingerprint result, resumed-during-check, decision) to stderr, which
-hypridle's children send to the user journal.
+resumed-during-check, decision) to stderr, which hypridle's children send
+to the user journal.
 """
 import argparse
 import fcntl
@@ -72,7 +68,7 @@ def swaylock_holding() -> bool:
     hypridle's lock_cmd runs `flock -n $XDG_RUNTIME_DIR/swaylock.lock
     swaylock -f`, so while swaylock is active the lock file is held
     exclusively.  We try a non-blocking shared lock: if it fails the lock
-    screen is up and we must not touch fprintd or the camera."""
+    screen is up and we must not touch the camera."""
     lock_path = os.path.join(
         os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"),
         "swaylock.lock",
@@ -206,8 +202,6 @@ def main() -> int:
     ap.add_argument("--settle-frames", type=int, default=15,
                     help="frames to skip before running detection (auto-exposure settle)")
     ap.add_argument("--timeout", type=float, default=10.0, help="seconds to wait for gst-launch")
-    ap.add_argument("--fp-grace", type=float, default=3.0,
-                    help="seconds to wait for a fingerprint after a face-less check")
     ap.add_argument("--model", required=True, help="path to the YuNet ONNX model file")
     ap.add_argument("--resumed-file",
                     default=os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/run/user/1000"),
@@ -216,8 +210,7 @@ def main() -> int:
     args = ap.parse_args()
 
     # If swaylock is already holding the lock file, the lock screen is up.
-    # Exit immediately without touching the webcam or claiming fprintd, so
-    # swaylock's PAM child can use the fingerprint reader for unlock.
+    # Exit immediately without touching the webcam.
     if swaylock_holding():
         log("swaylock already active, skipping check")
         return 0
@@ -238,59 +231,24 @@ def main() -> int:
         log(f"failed to load YuNet model, not locking: {e}")
         return 0
 
-    # Run fprintd-verify concurrently with the face check so a finger touch
-    # during the check also prevents the lock. Any failure (binary missing,
-    # no enrolled finger, no reader, polkit deny, daemon down) leaves
-    # fingerprint != "match", so the face result alone decides: the
-    # pre-fingerprint behaviour. fprintd allows one claimant at a time, and
-    # the reader is shared with swaylock's PAM child (unlock), so every path
-    # out of this block kills and reaps the process - a claim is never left
-    # behind, not on a crash or a timeout.
-    fingerprint = "unavailable"
-    fp_proc = None
-    try:
-        try:
-            fp_proc = subprocess.Popen(["fprintd-verify"],
-                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        except OSError as e:
-            log(f"fprintd-verify unavailable, ignoring fingerprint: {e}")
-
-        face, frames_seen, cam_error = stream_and_detect(
-            detector, args.gst_launch, args.target_object, args.width, args.height,
-            args.num_buffers, args.timeout, args.settle_frames,
-        )
-        if cam_error or frames_seen == 0:
-            # Camera unreadable (busy, missing, timed out): fail open, no lock.
-            log(f"camera unavailable (frames_seen={frames_seen}), not locking")
-            return 0
-
-        if face:
-            # A face already decides (no added latency, released below).
-            fingerprint = "not-needed"
-        else:
-            # Face check is done; give a finger touch a short grace period.
-            try:
-                out, _ = fp_proc.communicate(timeout=args.fp_grace)
-                matched = fp_proc.returncode == 0 and b"verify-match" in out
-                fingerprint = "match" if matched else "no-match"
-            except subprocess.TimeoutExpired:
-                fingerprint = "timeout"
-    finally:
-        if fp_proc:
-            fp_proc.kill()
-            fp_proc.wait()
+    face, frames_seen, cam_error = stream_and_detect(
+        detector, args.gst_launch, args.target_object, args.width, args.height,
+        args.num_buffers, args.timeout, args.settle_frames,
+    )
+    if cam_error or frames_seen == 0:
+        # Camera unreadable (busy, missing, timed out): fail open, no lock.
+        log(f"camera unavailable (frames_seen={frames_seen}), not locking")
+        return 0
 
     resumed = resumed_during_check(args.resumed_file, start)
     if face:
         decision = "skip (face)"
-    elif fingerprint == "match":
-        decision = "skip (fingerprint)"
     elif resumed:
         decision = "skip (resumed during check)"
     else:
         decision = None
-    log(f"face={face} frames={frames_seen} fingerprint={fingerprint} "
-        f"resumed={resumed} decision={decision or 'lock'}")
+    log(f"face={face} frames={frames_seen} resumed={resumed} "
+        f"decision={decision or 'lock'}")
     if decision:
         return 0
 
