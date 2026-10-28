@@ -284,7 +284,7 @@ in
     # the daemon, its remote-build SSH coordination, and all local builds
     # share this one cgroup, so a memory.max OOM-kill (memory.oom.group=1)
     # would take out the daemon + every in-flight build atomically and wedge
-    # the store (see the teleclaude note below — same rejected approach). A
+    # the store. A
     # true per-build hard cap needs nix use-cgroups + auto-allocate-uids
     # (experimental); not enabled here.
     MemoryHigh = "16G";
@@ -335,22 +335,10 @@ in
     ""
     "${config.services.hypridle.package}/bin/hypridle -c ${./hypr/hypridle.conf}"
   ];
-  # Protect the Claude Code agent session (runs under teleclaude.service in
-  # app.slice at oom_score~800 with ManagedOOMPreference=none, i.e. a default
-  # oomd candidate). Mark it avoid-last so oomd sacrifices builds/chromium/the
-  # AI gateway first; the agent is the system's control plane. oomd ignores
-  # OOMScoreAdjust and a user service cannot set a negative one, so this
-  # preference is the only available protection lever. Hard-capping nix-daemon
-  # was rejected: MemoryMax on the shared build cgroup SIGKILLs the daemon and
-  # all in-flight builds atomically, wedging the store; the existing
-  # MemoryHigh=20G + OOMScoreAdjust=500 already bias builds as the OOM victim.
-  systemd.user.services.teleclaude.serviceConfig.ManagedOOMPreference = "avoid";
-
   # Keep Claude and the local LLM proxies responsive while terminal jobs crunch.
   # These units live in ~/.config/systemd/user, which shadows any full unit
   # NixOS writes to /etc/systemd/user, so systemd.user.services.<n> settings
-  # never load (the teleclaude ManagedOOMPreference above is dead for this
-  # reason). Plain drop-ins merge across search paths; overrideStrategy
+  # never load. Plain drop-ins merge across search paths; overrideStrategy
   # "asDropin" would also inject NixOS's default PATH and clobber claude-api's.
   # Desktop first: Hyprland (session.slice) and apps (app.slice) outrank AI work.
   # Inside ai.slice, claude itself (weight 100) outranks the Bash commands it
@@ -393,7 +381,7 @@ in
   systemd.packages =
     map (n: pkgs.writeTextDir "lib/systemd/user/${n}.service.d/ai-slice.conf"
       "[Service]\nSlice=ai.slice\n")
-      [ "claude-api" "claude-intercept" "venice-api" "teleclaude" "muninn" ]
+      [ "claude-api" "claude-intercept" "venice-api" "muninn" ]
     ++ map (n: pkgs.writeTextDir "lib/systemd/user/${n}.slice.d/zz-oomd.conf"
       "[Slice]\nManagedOOMMemoryPressure=auto\n")
       [ "ai" "ai-jobs" "ai-jobs-" ]
