@@ -842,14 +842,16 @@ let
       envnames=() # assigned by jqlist via nameref
       jqlist envnames --arg c "$cmdname" '.commands[$c].env // [] | .[]' "$config"
       envargs=()
+      # landrun clears the environment: each variable bwrap sets is passed on by name.
+      landenv=(--env HOME --env USER --env PATH --env TERM --env SSL_CERT_FILE --env JAIL_POLICY --env JAIL_ALLOW)
       for n in LANG LC_ALL "''${envnames[@]}"; do
         [[ "$n" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || die "bad env name in $config: $n"
-        if [[ -n "''${!n+x}" ]]; then envargs+=(--setenv "$n" "''${!n}"); fi
+        if [[ -n "''${!n+x}" ]]; then envargs+=(--setenv "$n" "''${!n}"); landenv+=(--env "$n"); fi
       done
 
       # Fresh root: only the store closure of the command, toolset, cacert and resolvConf.
       args=()
-      closure_inputs=("$cmdpath" "${toolset}" "${cacert}" "${resolvConf}" "''${toolpaths[@]}")
+      closure_inputs=("$cmdpath" "${landrun}" "${toolset}" "${cacert}" "${resolvConf}" "''${toolpaths[@]}")
       while IFS= read -r p; do args+=(--ro-bind "$p" "$p"); done < <(
         nix-store -qR "''${closure_inputs[@]}")
 
@@ -874,7 +876,8 @@ let
       # create one.
       jail_copy=/dev/null
       jail_profiles=()
-      if [[ -f "$PWD/.jail.json" ]]; then
+      # -s: the empty mount point bwrap leaves behind for the /dev/null bind counts as absent.
+      if [[ -s "$PWD/.jail.json" ]]; then
         jail_copy=$(umask 077; mktemp "$pdir/jail.json.XXXXXX")
         cat -- "$PWD/.jail.json" >"$jail_copy"
         jq -e -f "${jailJsonCheck}" "$jail_copy" >/dev/null 2>&1 || die "$PWD/.jail.json fails schema validation"
@@ -904,7 +907,7 @@ let
       done
 
       # Landlock arguments for landrun (inside bwrap).
-      LANDLOCK_ARGS=(--rox /nix/store --rw "$HOME" --rw "$PWD" --rw /tmp --rw /dev --ro /etc)
+      LANDLOCK_ARGS=(--rox /nix/store --rw "$HOME" --rw "$PWD" --rw /tmp --rw /dev --ro /etc --ro /proc)
       ipre='^([0-9a-fA-F.:]+)(/[0-9]+)?:([0-9]+)/(tcp|udp)$'
       domre='^([A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*)(:[0-9]+)?$'
       if [[ "$policy" == internet ]]; then
@@ -1007,7 +1010,7 @@ let
         # and --die-with-parent match the jail; --seccomp applies the same BPF.
         # landrun restricts filesystem access to those paths only and allows
         # only the proxy bind port and upstream 80/443 connects.
-        proxy_closure=("${pkgs.tinyproxy}")
+        proxy_closure=("${pkgs.tinyproxy}" "${landrun}")
         proxy_bwrap=(--ro-bind "${resolvConf}" /etc/resolv.conf
                      --ro-bind /etc/hosts /etc/hosts
                      --ro-bind /etc/nsswitch.conf /etc/nsswitch.conf
@@ -1030,6 +1033,7 @@ let
         purl="http://127.0.0.1:$proxy_port"
         args+=(--setenv HTTPS_PROXY "$purl" --setenv HTTP_PROXY "$purl"
                --setenv https_proxy "$purl" --setenv http_proxy "$purl")
+        landenv+=(--env HTTPS_PROXY --env HTTP_PROXY --env https_proxy --env http_proxy)
       fi
 
       # Open FD 3 for the seccomp BPF filter, then run bwrap with landrun inside.
@@ -1037,7 +1041,7 @@ let
       rc=0
       "$jnet" exec "$runid" -- "${pkgs.util-linux}/bin/setpriv" --inh-caps -all --ambient-caps -all -- \
         "${pkgs.bubblewrap}/bin/bwrap" "''${args[@]}" -- \
-        "${landrun}/bin/landrun" "''${LANDLOCK_ARGS[@]}" -- "$cmdpath" "$@" || rc=$?
+        "${landrun}/bin/landrun" "''${LANDLOCK_ARGS[@]}" "''${landenv[@]}" -- "$cmdpath" "$@" || rc=$?
       exit "$rc"
     '';
   };
