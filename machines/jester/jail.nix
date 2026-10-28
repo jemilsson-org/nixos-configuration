@@ -1021,7 +1021,7 @@ let
         proxy_land=(--ro "$pdir" --ro /etc --rox /nix/store
                     --bind-tcp "$proxy_port" --connect-tcp 80 --connect-tcp 443)
         exec 4<"${seccompBpf}"
-        "$jnet" exec "$runid" -- "${pkgs.util-linux}/bin/setpriv" --ambient-caps drop-all -- \
+        "$jnet" exec "$runid" -- "${pkgs.util-linux}/bin/setpriv" --inh-caps -all --ambient-caps -all -- \
           "${pkgs.bubblewrap}/bin/bwrap" "''${proxy_bwrap[@]}" --seccomp 4 -- \
           "${landrun}/bin/landrun" "''${proxy_land[@]}" -- \
           "${pkgs.tinyproxy}/bin/tinyproxy" -d -c "$pdir/tinyproxy.conf" >"$pdir/log" 2>&1 &
@@ -1035,7 +1035,7 @@ let
       # Open FD 3 for the seccomp BPF filter, then run bwrap with landrun inside.
       exec 3<"${seccompBpf}"
       rc=0
-      "$jnet" exec "$runid" -- "${pkgs.util-linux}/bin/setpriv" --ambient-caps drop-all -- \
+      "$jnet" exec "$runid" -- "${pkgs.util-linux}/bin/setpriv" --inh-caps -all --ambient-caps -all -- \
         "${pkgs.bubblewrap}/bin/bwrap" "''${args[@]}" -- \
         "${landrun}/bin/landrun" "''${LANDLOCK_ARGS[@]}" -- "$cmdpath" "$@" || rc=$?
       exit "$rc"
