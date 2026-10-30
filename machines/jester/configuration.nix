@@ -1184,6 +1184,10 @@ in
     # forwards to it, so SSH_AUTH_SOCK on the TPM agent gets both
     # the TPM identity and the card auth key.
     agentSockPaths = [ "$XDG_RUNTIME_DIR/fafnir/openpgp-ssh.sock" ];
+    # TPM-resident sign-only key for the nl1-builder nix-ssh user.
+    extraSshIdentities = [ "nix-ssh" ];
+    # Unattended only for nix-ssh (remote builds must not prompt).
+    unattendedKeys."SHA256:tc440OT0tGUkwvwFqh+u0xxrsenVirzmUZCXsrpn1JE" = "unattended";
     secretService.enable = true;
     # Opt-in LLM auto-approver (Venice.ai). Routine native sign/decrypt
     # requests skip the fingerprint prompt when they match a
