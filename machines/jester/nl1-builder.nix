@@ -99,6 +99,15 @@ in
         ServerAliveInterval 15
         ServerAliveCountMax 2
         ConnectTimeout 30
+        # Reuse one TLS+SSH session across the many short ssh calls nix makes per
+        # build. %d is the local user's home (getpwuid, not $HOME), so root's
+        # nix-daemon and the user get separate sockets in a dir only each owns;
+        # %C hashes host, port, user, so the path stays under the 104-byte limit.
+        # ssh does not create the directory; NixOS's ssh-root-provision tmpfiles
+        # rule creates /root/.ssh.
+        ControlMaster auto
+        ControlPath %d/.ssh/cm-%C
+        ControlPersist 10m
     '';
 
     programs.ssh.knownHosts.${alias} = {
