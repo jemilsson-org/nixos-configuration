@@ -37,7 +37,7 @@
     # Deliberately NOT following nixpkgs: it pins its own gpui/crate2nix
     # build against nixos-unstable.
     papper = {
-      url = "git+file:///home/jonas/workspace/papper?ref=feat/integration";
+      url = "git+file:///home/jonas/workspace/papper?ref=master";
     };
     # bambu-studio = {
     #   url = "github:zhaofengli/nixpkgs/bambu-studio";
