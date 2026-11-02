@@ -42,7 +42,10 @@ def parse_packages(buf):
     packages = []
     while len(buf) >= 6:
         if buf[0] != 0x5A:
-            buf = buf[1:]
+            # Jump to the next frame start in one slice; dropping one
+            # byte per iteration copies the buffer each time (quadratic).
+            start = buf.find(b"Z")
+            buf = buf[start:] if start != -1 else b""
             continue
         length = int.from_bytes(buf[1:3], "big")
         total = 3 + 1 + length + 1  # header + body(len incl cmd) + crc16
