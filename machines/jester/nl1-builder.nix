@@ -34,6 +34,31 @@ let
   alias = "nl1-builder";
   sni = "builder.decentgaming.io";
   address = "175.110.121.112"; # nl1 publicIp, decent-nixos-configuration inventory.nix
+
+  # Shared ssh_config settings for both the store user (nix-ssh) and the
+  # eval user (nix-eval), which differ only in User and IdentityFile.
+  # socat TLS ProxyCommand, host key pinning, keepalive, multiplexing.
+  commonHost = user: identity: ''
+    HostKeyAlias ${alias}
+    StrictHostKeyChecking yes
+    IdentitiesOnly yes
+    IdentityAgent none
+    IdentityFile ${identity}
+    ProxyCommand ${pkgs.socat}/bin/socat - OPENSSL:${address}:443,snihost=${sni},commonname=${sni},verify=1,cafile=${config.security.pki.caBundle}
+    ServerAliveInterval 15
+    ServerAliveCountMax 2
+    ConnectTimeout 30
+    # Reuse one TLS+SSH session across the many short ssh calls nix makes per
+    # build. %d is the local user's home (getpwuid, not $HOME), so root's
+    # nix-daemon and the user get separate sockets in a dir only each owns;
+    # %C hashes host, port, user, so the path stays under the 104-byte limit.
+    # ssh does not create the directory; NixOS's ssh-root-provision tmpfiles
+    # rule creates /root/.ssh.
+    ControlMaster auto
+    ControlPath %d/.ssh/cm-%C
+    ControlPersist 10m
+    User ${user}
+  '';
 in
 {
   options.services.nl1-builder.keys = lib.mkOption {
@@ -88,26 +113,14 @@ in
     programs.ssh.extraConfig = ''
 
       # nl1 build server, SSH inside TLS (see machines/jester/nl1-builder.nix).
+      # nix-ssh: store-only user, root-owned key, used by nix-daemon.
       Host ${alias}
-        User nix-ssh
-        HostKeyAlias ${alias}
-        StrictHostKeyChecking yes
-        IdentitiesOnly yes
-        IdentityAgent none
-        IdentityFile ${dir}/ssh_ed25519
-        ProxyCommand ${pkgs.socat}/bin/socat - OPENSSL:${address}:443,snihost=${sni},commonname=${sni},verify=1,cafile=${config.security.pki.caBundle}
-        ServerAliveInterval 15
-        ServerAliveCountMax 2
-        ConnectTimeout 30
-        # Reuse one TLS+SSH session across the many short ssh calls nix makes per
-        # build. %d is the local user's home (getpwuid, not $HOME), so root's
-        # nix-daemon and the user get separate sockets in a dir only each owns;
-        # %C hashes host, port, user, so the path stays under the 104-byte limit.
-        # ssh does not create the directory; NixOS's ssh-root-provision tmpfiles
-        # rule creates /root/.ssh.
-        ControlMaster auto
-        ControlPath %d/.ssh/cm-%C
-        ControlPersist 10m
+        ${commonHost "nix-ssh" "${dir}/ssh_ed25519"}
+
+      # nix-eval: untrusted shell user for remote nix eval and cargo check.
+      # User-owned key.
+      Host nl1-eval
+        ${commonHost "nix-eval" "~/.ssh/nl1-builder-eval_ed25519"}
     '';
 
     programs.ssh.knownHosts.${alias} = {
