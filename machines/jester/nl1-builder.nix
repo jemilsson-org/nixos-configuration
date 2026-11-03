@@ -46,17 +46,13 @@ let
     IdentityFile ${identity}
     ProxyCommand ${pkgs.socat}/bin/socat - OPENSSL:${address}:443,snihost=${sni},commonname=${sni},verify=1,cafile=${config.security.pki.caBundle}
     ServerAliveInterval 15
-    ServerAliveCountMax 2
+    # A busy builder can stall past 30s, and one dropped connection fails every build queued on it.
+    ServerAliveCountMax 6
     ConnectTimeout 30
-    # Reuse one TLS+SSH session across the many short ssh calls nix makes per
-    # build. %d is the local user's home (getpwuid, not $HOME), so root's
-    # nix-daemon and the user get separate sockets in a dir only each owns;
-    # %C hashes host, port, user, so the path stays under the 104-byte limit.
-    # ssh does not create the directory; NixOS's ssh-root-provision tmpfiles
-    # rule creates /root/.ssh.
-    ControlMaster auto
-    ControlPath %d/.ssh/cm-%C
-    ControlPersist 10m
+    # nix's ssh-ng runs its own master and handshakes with `echo started`; a
+    # shared mux socket misroutes that reply ("protocol mismatch, got
+    # 'started'") and the master's exit drops every session sharing it.
+    ControlMaster no
     User ${user}
   '';
 in
