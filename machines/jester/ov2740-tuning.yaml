@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: CC0-1.0
 # OV2740 soft-ISP tuning for jester. Same algorithm chain as
-# uncalibrated.yaml plus a Ccm block. Matrix fitted 2026-09-10 by webcam-
-# calibrate.py fit from a ColorChecker chart shown on the EHOMEWEI panel at
-# 35% linear brightness, with dark+flat panel-falloff correction (23 usable
-# patches, 5.2% mean residual), constrained least squares with each row
+# uncalibrated.yaml plus a Ccm block. Matrix fitted 2026-11-05 by webcam-
+# calibrate.py fit from a ColorChecker chart shown on the DP-5 monitor at
+# 35% linear brightness, with dark+flat panel-falloff correction (22 usable
+# patches, 3.0% mean residual), constrained least squares with each row
 # summing to 1 -- AWB upstream already supplies the white point, so the CCM
 # only rotates hue/saturation. See webcam-calibrate.py's module docstring for
 # the method and rationale.
@@ -16,9 +16,9 @@ algorithms:
   - Ccm:
       ccms:
         - ct: 6500
-          ccm: [ 1.5241, -0.4575, -0.0666,
-                 -0.1654, 1.4170, -0.2516,
-                 -0.0051, -0.5852, 1.5903 ]
+          ccm: [ 1.4691, -0.4393, -0.0298,
+                 -0.1679, 1.4001, -0.2321,
+                 -0.0022, -0.5968, 1.5989 ]
   - Adjust:
   - Agc:
 ...
