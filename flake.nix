@@ -166,7 +166,7 @@
         assert lib.hasInfix "User nix-ssh" on.programs.ssh.extraConfig;
         assert lib.hasInfix "IdentitiesOnly yes" on.programs.ssh.extraConfig;
         assert lib.hasInfix "ServerAliveInterval 15" on.programs.ssh.extraConfig;
-        assert lib.hasInfix "ServerAliveCountMax 2" on.programs.ssh.extraConfig;
+        assert lib.hasInfix "ServerAliveCountMax 6" on.programs.ssh.extraConfig;
         assert lib.hasInfix "ConnectTimeout 30" on.programs.ssh.extraConfig;
         assert !lib.hasInfix "-cert" on.programs.ssh.extraConfig;
         assert !lib.hasInfix "-key" on.programs.ssh.extraConfig;
