@@ -992,7 +992,7 @@ in
     # claude in ai.slice (see systemd.user.slices.ai); falls back to direct exec.
     (let
       # Claude passes every hook, MCP server and Bash tool command to this
-      # prefix as one string. Only Bash tool commands (they source a zsh shell
+      # prefix as one string. Only Bash tool commands (they source a bash shell
       # snapshot) get a scope; hooks skip systemd-run's startup cost.
       # Each session's jobs run in ai-jobs-p<pid>.slice, named from claude's
       # own run-p<pid> scope in /proc/self/cgroup, so one session's jobs
@@ -1010,7 +1010,7 @@ in
                 slice="ai-jobs.slice" ;;
             esac
             exec ${pkgs.systemd}/bin/systemd-run --user --scope --quiet --collect \
-              --slice="''${slice}" -- "''${SHELL:-/bin/sh}" -c "$1" ;;
+              --slice="''${slice}" -- ${pkgs.bashInteractive}/bin/bash -c "$1" ;;
         esac
         exec /bin/sh -c "$1"
       '';
@@ -1025,7 +1025,9 @@ in
         # CLDR en-DK formats time as 15.42; en-SE gives ISO dates, 15:42, English names.
         # glibc lacks en_SE, so commands claude runs fall back to C time format.
         # Set it via env, not export: bash warns when assigning a locale glibc lacks.
-        lc="${pkgs.coreutils}/bin/env LC_TIME=en_SE.UTF-8"
+        # Agents write bash; zsh globbing, word splitting and arrays break it.
+        # The job prefix above must run the same shell as this snapshot.
+        lc="${pkgs.coreutils}/bin/env LC_TIME=en_SE.UTF-8 CLAUDE_CODE_SHELL=${pkgs.bashInteractive}/bin/bash"
         if ! ${pkgs.gnugrep}/bin/grep -q /ai.slice/ /proc/self/cgroup 2>/dev/null \\
           && ${pkgs.systemd}/bin/systemd-run --user --scope --quiet --collect true 2>/dev/null; then
           exec \$lc CLAUDE_CODE_SHELL_PREFIX=${claudeJobPrefix} ${pkgs.systemd}/bin/systemd-run --user --scope --quiet --collect --slice=ai.slice -- "\$real" "\$@"
