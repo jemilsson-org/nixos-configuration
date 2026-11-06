@@ -8,6 +8,7 @@ Protocol (reverse-engineered from the FreeBuds 6, model BTFT0020):
 On each 0106 push this daemon reads 0108 and drives playerctl.
 Reconnects when the buds drop.
 """
+import select
 import socket
 import subprocess
 import time
@@ -78,13 +79,30 @@ def listen_once():
     worn = None
     buf = b""
     s.send(read_rq(0x01, 0x08))  # prime initial state
+    poller = select.poll()
+    poller.register(s, select.POLLIN)
     while True:
-        try:
-            chunk = s.recv(4096)
-        except socket.timeout:
+        # The RFCOMM socket reports POLLHUP once the buds drop, but
+        # recv still returns EAGAIN instead of b"". Wait on poll so the
+        # hangup is seen at once instead of spinning on a timeout.
+        events = poller.poll()
+        if not events:
             continue
+        _, ev = events[0]
+        chunk = b""
+        if ev & select.POLLIN:
+            try:
+                chunk = s.recv(4096)
+            except (BlockingIOError, socket.timeout):
+                chunk = None
+            if chunk == b"":  # EOF
+                return
+        if ev & (select.POLLHUP | select.POLLERR | select.POLLNVAL):
+            # Hangup can come with unread data: stop only once drained.
+            if not chunk:
+                return
         if not chunk:
-            return
+            continue
         buf += chunk
         packages, buf = parse_packages(buf)
         for cmd, params in packages:

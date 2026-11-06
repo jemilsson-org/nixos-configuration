@@ -328,6 +328,11 @@
       checks.x86_64-linux.presence-lock-test =
         pkgs.callPackage ./machines/jester/presence-lock-test.nix { };
 
+      # Hermetic self-test for freebuds-autopause.py (fake socket and poll, no
+      # Bluetooth). Run: nix build .#checks.x86_64-linux.freebuds-autopause-test
+      checks.x86_64-linux.freebuds-autopause-test =
+        pkgs.callPackage ./machines/jester/freebuds-autopause-test.nix { };
+
       checks.x86_64-linux.jester-nl1-builder-eval = nl1Eval;
 
       checks.x86_64-linux.jester-slice-invariants = sliceEval;
