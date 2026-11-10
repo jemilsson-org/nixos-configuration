@@ -998,6 +998,8 @@ in
       # own run-p<pid> scope in /proc/self/cgroup, so one session's jobs
       # throttle only that session (2026-10-24). Caps come from the
       # ai-jobs-.slice.d drop-in, not per-command flags.
+      # RuntimeMaxSec is per scope, so it must be a flag: a scope outlives the
+      # agent that started it, and systemd kills it after 6 hours.
       claudeJobPrefix = pkgs.writeShellScript "claude-job-prefix" ''
         case "$1" in
           *shell-snapshots/snapshot-*)
@@ -1010,7 +1012,7 @@ in
                 slice="ai-jobs.slice" ;;
             esac
             exec ${pkgs.systemd}/bin/systemd-run --user --scope --quiet --collect \
-              --slice="''${slice}" -- ${pkgs.bashInteractive}/bin/bash -c "$1" ;;
+              -p RuntimeMaxSec=6h --slice="''${slice}" -- ${pkgs.bashInteractive}/bin/bash -c "$1" ;;
         esac
         exec /bin/sh -c "$1"
       '';

@@ -223,6 +223,8 @@ commands run in `ai-jobs-p<claude pid>.slice` under ai-jobs, capped by the
 `ai-jobs-.slice.d` prefix drop-in (CPUWeight 100, MemoryHigh 5G, MemoryMax
 8G, MemorySwapMax 1G). `ai.slice` carries no CPUQuota: a 400% quota shared
 by all sessions held CPU pressure at 85-94% and stalled every claude.
+Bash job scopes also carry `RuntimeMaxSec=6h` (2026-11-10). Orphaned scopes
+outlived their agents and ran until reboot.
 
 Containment mechanism: a spawner puts its background jobs in the child slice
 with `systemd-run --user --scope --slice=ai-jobs.slice`. The claude wrapper does
