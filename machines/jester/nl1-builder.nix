@@ -7,6 +7,10 @@
 # exist only after the builder's first boot, so one nullable binding switches
 # the build machine, the ssh alias and the known host on together.
 #
+# Two build machine entries share this tunnel: `nl1-builder` (16 jobs, any
+# derivation) and `nl1-builder-heavy` (2 jobs, heavy-mem only) so Lean proofs
+# queue at 2 concurrent instead of running the builder out of memory.
+#
 # Path: nix-daemon (root) -> `ssh nl1-builder` -> ProxyCommand socat -> nl1:443.
 # socat is a binary relay. `openssl s_client` held this slot before and
 # desynchronised the byte stream under sustained concurrent load: broken pipes,
@@ -93,6 +97,24 @@ in
         # No kvm or nixos-test: the guest has no nested virtualisation.
         supportedFeatures = [ "big-parallel" "benchmark" ];
       }
+      # Heavy-memory lane: the same builder under a second name, capped at 2
+      # jobs. Lean proof derivations each run one process of 14 to 24 GiB, and
+      # the builder has 80 GiB, so the worst case (24 GiB) fits twice. Nix
+      # counts job slots per store URL, so a second host name is what makes
+      # this a separate queue. The cap is per client: every machine that lists
+      # this entry gets its own 2 slots. Only derivations tagged heavy-mem
+      # land here; the plain entry above never takes them. The builder offers
+      # the feature via extra-system-features in decent-nixos-configuration
+      # modules/builder.nix.
+      {
+        hostName = "${alias}-heavy";
+        protocol = "ssh-ng";
+        systems = [ "x86_64-linux" ];
+        maxJobs = 2;
+        speedFactor = 20;
+        supportedFeatures = [ "heavy-mem" ];
+        mandatoryFeatures = [ "heavy-mem" ];
+      }
     ];
 
     nix.settings = {
@@ -110,7 +132,7 @@ in
 
       # nl1 build server, SSH inside TLS (see machines/jester/nl1-builder.nix).
       # nix-ssh: store-only user, root-owned key, used by nix-daemon.
-      Host ${alias}
+      Host ${alias} ${alias}-heavy
         ${commonHost "nix-ssh" "${dir}/ssh_ed25519"}
 
       # nix-eval: untrusted shell user for remote nix eval and cargo check.

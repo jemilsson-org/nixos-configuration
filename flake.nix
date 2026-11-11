@@ -134,6 +134,7 @@
           hosts = c: map (m: m.hostName) c.nix.buildMachines;
           sort = builtins.sort builtins.lessThan;
           nl1 = c: builtins.filter (m: m.hostName == "nl1-builder") c.nix.buildMachines;
+          heavy = c: builtins.filter (m: m.hostName == "nl1-builder-heavy") c.nix.buildMachines;
           subs = c: c.nix.settings.substituters ++ (c.nix.settings.extra-substituters or [ ]);
           visible = c: {
             inherit (c.nix) distributedBuilds buildMachines extraOptions;
@@ -142,21 +143,32 @@
             knownHosts = builtins.attrNames c.programs.ssh.knownHosts;
           };
           m = (builtins.head (nl1 on));
+          h = (builtins.head (heavy on));
         in
         assert off.services.nl1-builder.keys == null;
         assert jester.config.services.nl1-builder.keys != null;
         assert visible off == visible master;
         assert !(builtins.elem "nl1-builder" (hosts off));
+        assert !(builtins.elem "nl1-builder-heavy" (hosts off));
         assert on.nix.distributedBuilds;
         assert on.nix.settings.builders-use-substitutes;
         assert on.nix.settings.fallback;
         assert builtins.length (nl1 on) == 1;
-        assert hosts jester.config == [ "nl1-builder" ];
+        assert builtins.length (heavy on) == 1;
+        assert hosts jester.config == [ "nl1-builder" "nl1-builder-heavy" ];
         assert m.protocol == "ssh-ng";
         assert m.systems == [ "x86_64-linux" ];
         assert m.maxJobs == 16 && m.speedFactor == 20;
         assert m.supportedFeatures == [ "big-parallel" "benchmark" ];
-        assert sort (hosts on) == sort (hosts off ++ [ "nl1-builder" ]);
+        assert !(builtins.elem "heavy-mem" m.supportedFeatures);
+        # Heavy lane: 2 jobs, heavy-mem only. The mandatory feature keeps
+        # untagged derivations off these slots.
+        assert h.protocol == "ssh-ng";
+        assert h.systems == [ "x86_64-linux" ];
+        assert h.maxJobs == 2 && h.speedFactor == 20;
+        assert h.supportedFeatures == [ "heavy-mem" ];
+        assert h.mandatoryFeatures == [ "heavy-mem" ];
+        assert sort (hosts on) == sort (hosts off ++ [ "nl1-builder" "nl1-builder-heavy" ]);
         assert !(builtins.elem "ssh-ng://nl1-builder" (subs on));
         assert builtins.elem dummyCache on.nix.settings.extra-trusted-public-keys;
         assert lib.hasInfix "/bin/socat - OPENSSL:" on.programs.ssh.extraConfig;
