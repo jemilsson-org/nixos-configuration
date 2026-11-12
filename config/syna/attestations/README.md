@@ -16,12 +16,12 @@ Each bundle ages with the underlying cert chain. Re-export when:
 `fafnir` (jester):
 
 ```
-ssh jester 'syna export fafnir' > config/syna/attestations/jester-fafnir.syna
+syna export fafnir --socket /run/user/1000/fafnir/tpm-ops.sock --key <fingerprint> --out config/syna/attestations/jester-fafnir.syna
 ```
 
 Replay before committing:
 
 ```
-syna verify config/syna/attestations/jester-fafnir.syna
+syna config/syna/attestations/jester-fafnir.syna
 ```
 
