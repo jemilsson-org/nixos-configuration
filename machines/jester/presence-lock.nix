@@ -4,7 +4,8 @@
 # 24/7. hypridle.conf's 30s listener runs presence-lock on idle; it grabs a
 # handful of frames, checks for a face, and locks if none is seen -
 # otherwise the existing 120s hypridle listener still locks unconditionally
-# as a fallback.
+# as a fallback. On a home SSID (see on-home-wifi) both are skipped and a
+# 1800s listener locks instead.
 #
 # Camera access: the IPU6/OV2740 only enumerates via libcamera/PipeWire (see
 # camera.nix), so a plain V4L2 client (cv2.VideoCapture) can't read it
@@ -45,13 +46,22 @@ let
         "$@"
     '';
   };
+  onHomeWifi = pkgs.callPackage ./on-home-wifi.nix { } { inherit (cfg) homeSsids; };
 in
 {
   options.services.presence-lock = {
     enable = lib.mkEnableOption "presence-based early lock on webcam face detection" // { default = true; };
+    # Trust basis: nmcli reports the SSID of an associated connection, and
+    # associating to the saved profile needs its PSK, so a bare SSID spoof
+    # does not qualify. An empty list means never home.
+    homeSsids = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      description = "Wifi SSIDs on which on-home-wifi succeeds and hypridle delays the lock to 1800s.";
+    };
   };
 
   config = lib.mkIf cfg.enable {
-    environment.systemPackages = [ presenceLockScript ];
+    environment.systemPackages = [ presenceLockScript onHomeWifi ];
   };
 }

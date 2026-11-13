@@ -340,6 +340,10 @@
       checks.x86_64-linux.presence-lock-test =
         pkgs.callPackage ./machines/jester/presence-lock-test.nix { };
 
+      # Hermetic self-test for on-home-wifi (fake nmcli). Run: nix build .#checks.x86_64-linux.on-home-wifi-test
+      checks.x86_64-linux.on-home-wifi-test =
+        pkgs.callPackage ./machines/jester/on-home-wifi-test.nix { };
+
       # Hermetic self-test for freebuds-autopause.py (fake socket and poll, no
       # Bluetooth). Run: nix build .#checks.x86_64-linux.freebuds-autopause-test
       checks.x86_64-linux.freebuds-autopause-test =

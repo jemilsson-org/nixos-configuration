@@ -315,6 +315,7 @@ in
   };
   systemd.user.services.fafnir.serviceConfig.ManagedOOMPreference = "avoid";
   systemd.user.services.fafnir-openpgp.serviceConfig.ManagedOOMPreference = "avoid";
+  services.presence-lock.homeSsids = [ "Happylainen" ];
   # Point hypridle at the Nix-managed config instead of the default
   # ~/.config/hypr/hypridle.conf. A store path can't drift out of sync with
   # the lock_cmd it points at the way the hand-edited
