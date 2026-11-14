@@ -477,6 +477,9 @@ in
     pyright
     ruff
     rust-analyzer
+    # PATH fallback for the ty-lsp Claude plugin (`ty server`); a project
+    # devShell's ty still wins inside that repo.
+    ty
     typescript
 
     handlr
