@@ -70,6 +70,7 @@ in
     ./jail.nix
     ./pi-lens.nix
     ./nix-retry.nix
+    ./iwlwifi-watchdog.nix
     ../../config/mx-debounce.nix
 
   ];
@@ -264,6 +265,9 @@ in
     # sooner vs page cache; cheap to refill on NVMe. Slab-vs-pagecache only;
     # anon-vs-file balance is governed by swappiness above. Do not exceed 200.
     "vm.vfs_cache_pressure" = 200;
+    # iwlmvm allocates TX queues as order-4 blocks, which failed 2026-11-15;
+    # compact more eagerly than the default 20.
+    "vm.compaction_proactiveness" = 50;
   };
 
   # 3. Bias the OOM killer toward local nix builds, the real trigger. The user
@@ -483,6 +487,10 @@ in
     # cost). Takes effect on reboot (module load time option).
     extraModprobeConfig = ''
       options btusb enable_autosuspend=0
+      # 2026-11-16 09:41 AX211 firmware crash (NMI_INTERRUPT_UMAC_FATAL):
+      # disable Wi-Fi power saving, the usual trigger. See iwlwifi-watchdog.nix.
+      options iwlwifi power_save=0
+      options iwlmvm power_scheme=1
     '';
     kernelParams = [
       "mem_sleep_default=s2idle"  # Only sleep mode available (firmware has no S3)
