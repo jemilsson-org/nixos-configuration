@@ -480,6 +480,8 @@ in
     # PATH fallback for the ty-lsp Claude plugin (`ty server`); a project
     # devShell's ty still wins inside that repo.
     ty
+    # uvx, which the astral Claude plugin uses to launch its servers.
+    uv
     typescript
 
     handlr
