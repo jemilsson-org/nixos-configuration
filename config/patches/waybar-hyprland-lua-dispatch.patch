@@ -1,0 +1,47 @@
+--- a/src/modules/hyprland/workspace.cpp
++++ b/src/modules/hyprland/workspace.cpp
+@@ -66,25 +66,32 @@
+   return std::nullopt;
+ }
+ 
++// Hyprland runs a Lua config; its IPC rejects the legacy "dispatch <name> <arg>" syntax.
++static std::string luaStr(const std::string& s) {
++  std::string out = "\"";
++  for (char c : s) {
++    if (c == '"' || c == '\\') out += '\\';
++    out += c;
++  }
++  return out + "\"";
++}
++
+ bool Workspace::handleClicked(GdkEventButton* bt) const {
+   if (bt->type == GDK_BUTTON_PRESS) {
+     try {
++      const auto focus = [this](const std::string& ws) {
++        m_ipc.getSocket1Reply(
++            "dispatch hl.dsp.focus({ workspace = " + ws +
++            (m_workspaceManager.moveToMonitor() ? ", on_current_monitor = true" : "") + " })");
++      };
+       if (id() > 0) {  // normal
+-        if (m_workspaceManager.moveToMonitor()) {
+-          m_ipc.getSocket1Reply("dispatch focusworkspaceoncurrentmonitor " + std::to_string(id()));
+-        } else {
+-          m_ipc.getSocket1Reply("dispatch workspace " + std::to_string(id()));
+-        }
++        focus(std::to_string(id()));
+       } else if (!isSpecial()) {  // named (this includes persistent)
+-        if (m_workspaceManager.moveToMonitor()) {
+-          m_ipc.getSocket1Reply("dispatch focusworkspaceoncurrentmonitor name:" + name());
+-        } else {
+-          m_ipc.getSocket1Reply("dispatch workspace name:" + name());
+-        }
++        focus(luaStr("name:" + name()));
+       } else if (id() != -99) {  // named special
+-        m_ipc.getSocket1Reply("dispatch togglespecialworkspace " + name());
++        m_ipc.getSocket1Reply("dispatch hl.dsp.workspace.toggle_special(" + luaStr(name()) + ")");
+       } else {  // special
+-        m_ipc.getSocket1Reply("dispatch togglespecialworkspace");
++        m_ipc.getSocket1Reply("dispatch hl.dsp.workspace.toggle_special()");
+       }
+       return true;
+     } catch (const std::exception& e) {

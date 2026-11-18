@@ -182,6 +182,10 @@ in
   nixpkgs.overlays = [
     (self: super: {
       waybar = super.waybar.overrideAttrs (oldAttrs: {
+        # Hyprland 0.56 runs a Lua config and its IPC rejects legacy "dispatch workspace N",
+        # so clicking a workspace in hyprland/workspaces did nothing. The patch sends
+        # hl.dsp.* Lua dispatches instead. Drop when upstream Waybar supports Lua dispatch.
+        patches = (oldAttrs.patches or [ ]) ++ [ ./patches/waybar-hyprland-lua-dispatch.patch ];
         mesonFlags = oldAttrs.mesonFlags ++ [ "-Dexperimental=true" ];
       });
     })
