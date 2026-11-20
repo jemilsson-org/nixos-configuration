@@ -488,6 +488,9 @@ in
 
     typescript
 
+    # WhatsApp Web wrapper; no official Linux client exists.
+    zapzap
+
     handlr
 
     masterpdfeditor
