@@ -483,8 +483,11 @@ in
     # uvx, which the astral Claude plugin uses to launch its servers.
     uv
 
-    # Google Gemini agent CLI; signs in with the AI Ultra account.
-    gemini-cli
+    # Google Antigravity IDE (FHS wrapper so extensions work) and its TUI agent
+    # client; both sign in with the AI Ultra account. Unstable: stable has
+    # only the 1.x IDE and no CLI.
+    unstable.antigravity-ide-fhs
+    unstable.antigravity-cli
 
     typescript
 
