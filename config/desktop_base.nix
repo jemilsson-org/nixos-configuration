@@ -482,6 +482,10 @@ in
     ty
     # uvx, which the astral Claude plugin uses to launch its servers.
     uv
+
+    # Google Gemini agent CLI; signs in with the AI Ultra account.
+    gemini-cli
+
     typescript
 
     handlr
@@ -668,50 +672,6 @@ in
 
     #passSecretService.enable = true;
   };
-
-
-
-  # GTK theming configuration moved to appearance.nix
-
-  virtualisation = {
-    docker = {
-      enable = true;
-      # docker.socket activates dockerd on first `docker` command; keeps
-      # docker.service off the network-online.target boot critical chain.
-      # No containers use restart policies today, so nothing auto-starts
-      # that would be lost.
-      enableOnBoot = false;
-      # --volumes intentionally omitted: would delete local DB volumes.
-      autoPrune = {
-        enable = true;
-        dates = "weekly";
-        flags = [ "--all" ];
-      };
-      #extraOptions = ''
-      #    --storage-opt dm.basesize=20G
-      #  '';
-    };
-    waydroid = {
-      enable = false;
-    };
-  };
-  # Additional fonts beyond the main appearance configuration
-  fonts.packages = with pkgs; [
-    corefonts
-    google-fonts
-    hack-font
-    powerline-fonts
-    emacs-all-the-icons-fonts
-    winePackages.fonts
-    tratex-font
-    dejavu_fonts
-    liberation_ttf
-    ubuntu-classic
-    noto-fonts-cjk-sans
-    ibm-plex
-    nerd-fonts.fira-code
-    nerd-fonts.blex-mono
-  ];
   services = {
 
     #upower.enable = true;
@@ -791,6 +751,50 @@ in
     };
 
   };
+
+
+
+  # GTK theming configuration moved to appearance.nix
+
+  virtualisation = {
+    docker = {
+      enable = true;
+      # docker.socket activates dockerd on first `docker` command; keeps
+      # docker.service off the network-online.target boot critical chain.
+      # No containers use restart policies today, so nothing auto-starts
+      # that would be lost.
+      enableOnBoot = false;
+      # --volumes intentionally omitted: would delete local DB volumes.
+      autoPrune = {
+        enable = true;
+        dates = "weekly";
+        flags = [ "--all" ];
+      };
+      #extraOptions = ''
+      #    --storage-opt dm.basesize=20G
+      #  '';
+    };
+    waydroid = {
+      enable = false;
+    };
+  };
+  # Additional fonts beyond the main appearance configuration
+  fonts.packages = with pkgs; [
+    corefonts
+    google-fonts
+    hack-font
+    powerline-fonts
+    emacs-all-the-icons-fonts
+    winePackages.fonts
+    tratex-font
+    dejavu_fonts
+    liberation_ttf
+    ubuntu-classic
+    noto-fonts-cjk-sans
+    ibm-plex
+    nerd-fonts.fira-code
+    nerd-fonts.blex-mono
+  ];
 
   nixpkgs.config.permittedInsecurePackages = [
     "electron_24"
