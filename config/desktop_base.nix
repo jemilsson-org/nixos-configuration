@@ -528,7 +528,7 @@ in
       '';
     };
 
-    steam.enable = false;  # Temporarily disabled due to inode exhaustion
+    steam.enable = true;
 
     wireshark.enable = true;
 
